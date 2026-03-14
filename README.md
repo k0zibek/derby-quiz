@@ -29,7 +29,6 @@
 
 ## Структура
 - [`client`](/Users/kozi/Documents/kahoot-horses/client) - интерфейсы teacher/player/screen
-- [`client/public/question-assets/modo-4e`](/Users/kozi/Documents/kahoot-horses/client/public/question-assets/modo-4e) - изображения для вопросов
 - [`client/src/components/QuestionContent.jsx`](/Users/kozi/Documents/kahoot-horses/client/src/components/QuestionContent.jsx) - общий renderer passage/image/options
 - [`client/src/i18n/kz.js`](/Users/kozi/Documents/kahoot-horses/client/src/i18n/kz.js) - казахский copy-слой
 - [`server/index.js`](/Users/kozi/Documents/kahoot-horses/server/index.js) - HTTP + Socket.IO transport
@@ -37,7 +36,6 @@
 - [`server/config.js`](/Users/kozi/Documents/kahoot-horses/server/config.js) - env-конфиг
 - [`server/questions.js`](/Users/kozi/Documents/kahoot-horses/server/questions.js) - загрузка и валидация вопросов
 - [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) - runtime-набор вопросов
-- [`content/modo-4e.docx`](/Users/kozi/Documents/kahoot-horses/content/modo-4e.docx) - исходный reference-файл с вопросами
 - [`scripts/dev.sh`](/Users/kozi/Documents/kahoot-horses/scripts/dev.sh) - локальный запуск `server + client`
 - [`package.json`](/Users/kozi/Documents/kahoot-horses/package.json) - корневые команды проекта
 
@@ -78,15 +76,6 @@ VITE_SERVER_URL=http://localhost:4000 npm run dev
 ## Контент
 Рабочий источник вопросов:
 - [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
-
-Этот файл уже содержит вопросы из:
-- [`content/modo-4e.docx`](/Users/kozi/Documents/kahoot-horses/content/modo-4e.docx)
-
-Важно:
-- `docx` не используется в runtime
-- в runtime сервер читает только [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
-- изображения для вопросов берутся из [`client/public/question-assets/modo-4e`](/Users/kozi/Documents/kahoot-horses/client/public/question-assets/modo-4e)
-- при изменении контента нужно редактировать [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) вручную, сверяясь с `docx`
 
 ## Формат вопроса
 Каждый вопрос в [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) содержит:
