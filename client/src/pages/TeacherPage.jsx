@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { sessionClient } from "../sessionClient";
 
@@ -19,35 +19,72 @@ function copyText(text) {
     navigator.clipboard.writeText(text).catch(() => { });
 }
 
+function getConnectionMessage(connectionState) {
+    if (connectionState === "connecting") {
+        return `Подключаемся к серверу игры (${sessionClient.serverUrl})...`;
+    }
+
+    if (connectionState === "disconnected") {
+        return `Нет соединения с сервером игры (${sessionClient.serverUrl}). Ждем переподключения.`;
+    }
+
+    return "";
+}
+
 export default function TeacherPage() {
     const [code, setCode] = useState("");
     const [session, setSession] = useState(null);
     const [created, setCreated] = useState(false);
     const [error, setError] = useState("");
+    const [connectionState, setConnectionState] = useState(sessionClient.getConnectionState());
+    const creatingSessionRef = useRef(false);
 
     useEffect(() => {
-        const unsubscribe = sessionClient.subscribeToSessionState((state) => {
-            setSession(state);
-            if (state?.code) {
-                setCode(state.code);
-            }
-        });
-
         async function ensureSession() {
-            if (created) return;
+            if (created || creatingSessionRef.current) return;
 
+            creatingSessionRef.current = true;
             const res = await sessionClient.createTeacherSession();
+            creatingSessionRef.current = false;
+
             if (res?.ok) {
                 setCode(res.code);
                 setCreated(true);
                 setError("");
-            } else {
-                setError(res?.error || "Не удалось создать сессию");
+                return;
             }
+
+            if (res?.code === "SOCKET_CONNECT_TIMEOUT" || res?.code === "SOCKET_CONNECT_ERROR") {
+                setError("");
+                return;
+            }
+
+            setError(res?.error || "Не удалось создать сессию");
         }
 
+        const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
+            setSession(state);
+            if (state?.code) {
+                setCode(state.code);
+                setCreated(true);
+                setError("");
+            }
+        });
+
+        const unsubscribeConnection = sessionClient.subscribeToConnection((event) => {
+            setConnectionState(event.state);
+
+            if (event.type === "connect" && !created) {
+                ensureSession();
+            }
+        });
+
         ensureSession();
-        return unsubscribe;
+
+        return () => {
+            unsubscribeState();
+            unsubscribeConnection();
+        };
     }, [created]);
 
     const joinUrl = useMemo(() => {
@@ -63,6 +100,7 @@ export default function TeacherPage() {
     const statusView = getStatusLabel(session?.status);
     const currentQuestionNumber = (session?.currentQuestionIndex ?? 0) + 1;
     const totalQuestions = session?.totalQuestions ?? 0;
+    const connectionMessage = getConnectionMessage(connectionState);
 
     async function handleAction(action) {
         setError("");
@@ -117,6 +155,7 @@ export default function TeacherPage() {
                         </div>
                     </div>
 
+                    {connectionMessage ? <div className="helper mt-16">{connectionMessage}</div> : null}
                     {error ? <div className="inline-error mt-16">{error}</div> : null}
                 </section>
 

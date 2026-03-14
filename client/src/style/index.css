@@ -684,6 +684,7 @@ button {
   background: rgba(255, 255, 255, 0.72);
   border: 4px solid white;
   box-shadow: 0 10px 24px rgba(17, 24, 39, 0.12);
+  transform: scaleX(-1);
 }
 
 .horse-label {

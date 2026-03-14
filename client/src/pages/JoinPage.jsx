@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { sessionClient } from "../sessionClient";
 
@@ -26,6 +26,34 @@ function storageKey(code) {
     return `horse-quiz-player:${code}`;
 }
 
+function getConnectionMessage(connectionState) {
+    if (connectionState === "connecting") {
+        return `Подключаемся к серверу игры (${sessionClient.serverUrl})...`;
+    }
+
+    if (connectionState === "disconnected") {
+        return `Нет соединения с сервером игры (${sessionClient.serverUrl}).`;
+    }
+
+    return "";
+}
+
+function getSocketErrorMessage(response) {
+    if (response?.code === "SOCKET_CONNECT_TIMEOUT") {
+        return "Сервер игры не ответил вовремя. Проверь, что сервер запущен и доступен в локальной сети.";
+    }
+
+    if (response?.code === "SOCKET_CONNECT_ERROR") {
+        return "Не удалось подключиться к серверу игры. Проверь IP-адрес и порт сервера.";
+    }
+
+    if (response?.code === "ACK_TIMEOUT") {
+        return "Сервер игры не ответил на запрос подключения. Попробуй ещё раз.";
+    }
+
+    return response?.error || "Не удалось подключиться";
+}
+
 export default function JoinPage() {
     const { code } = useParams();
     const [name, setName] = useState("");
@@ -34,11 +62,53 @@ export default function JoinPage() {
     const [session, setSession] = useState(null);
     const [joinLoading, setJoinLoading] = useState(false);
     const [answerFeedback, setAnswerFeedback] = useState("");
-    const [screenState, setScreenState] = useState("connecting");
+    const [connectionState, setConnectionState] = useState(sessionClient.getConnectionState());
     const [sessionError, setSessionError] = useState("");
     const [isRejoining, setIsRejoining] = useState(true);
+    const restoreInFlightRef = useRef(false);
 
     useEffect(() => {
+        async function restorePlayer() {
+            const savedPlayerId = localStorage.getItem(storageKey(code));
+            if (!savedPlayerId || joined || restoreInFlightRef.current) {
+                setIsRejoining(false);
+                return;
+            }
+
+            restoreInFlightRef.current = true;
+            setIsRejoining(true);
+
+            const res = await sessionClient.rejoinPlayer(code, savedPlayerId);
+            restoreInFlightRef.current = false;
+
+            if (res?.ok) {
+                setJoined(true);
+                setPlayerId(savedPlayerId);
+                setSession(res.state || null);
+                setSessionError("");
+                setIsRejoining(false);
+                return;
+            }
+
+            if (res?.code === "SESSION_NOT_FOUND" || res?.code === "PLAYER_NOT_FOUND") {
+                localStorage.removeItem(storageKey(code));
+                if (res?.code === "SESSION_NOT_FOUND") {
+                    setSessionError("Сессия не найдена. Проверь код игры.");
+                }
+            }
+
+            if (
+                res?.code &&
+                res.code !== "SOCKET_CONNECT_TIMEOUT" &&
+                res.code !== "SOCKET_CONNECT_ERROR" &&
+                res.code !== "ACK_TIMEOUT"
+            ) {
+                setSessionError(getSocketErrorMessage(res));
+            }
+
+            setIsRejoining(false);
+        }
+
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
             setSession(state);
 
@@ -56,38 +126,16 @@ export default function JoinPage() {
             }
 
             setSessionError("");
-            setScreenState(sessionClient.socket.connected ? "connected" : "disconnected");
+            setConnectionState(sessionClient.getConnectionState());
         });
 
-        const unsubscribeConnection = sessionClient.subscribeToConnection(() => {
-            setScreenState(sessionClient.socket.connected ? "connected" : "disconnected");
+        const unsubscribeConnection = sessionClient.subscribeToConnection((event) => {
+            setConnectionState(event.state);
+
+            if (event.type === "connect") {
+                restorePlayer();
+            }
         });
-
-        async function restorePlayer() {
-            setIsRejoining(true);
-            const savedPlayerId = localStorage.getItem(storageKey(code));
-
-            if (!savedPlayerId) {
-                setIsRejoining(false);
-                setScreenState(sessionClient.socket.connected ? "connected" : "connecting");
-                return;
-            }
-
-            const res = await sessionClient.rejoinPlayer(code, savedPlayerId);
-            if (res?.ok) {
-                setJoined(true);
-                setPlayerId(savedPlayerId);
-                setSession(res.state || null);
-                setSessionError("");
-            } else {
-                localStorage.removeItem(storageKey(code));
-                if (res?.code === "SESSION_NOT_FOUND") {
-                    setSessionError("Сессия не найдена. Проверь код игры.");
-                }
-            }
-
-            setIsRejoining(false);
-        }
 
         restorePlayer();
 
@@ -95,19 +143,16 @@ export default function JoinPage() {
             unsubscribeState();
             unsubscribeConnection();
         };
-    }, [code]);
+    }, [code, joined]);
 
     const statusView = getStatusLabel(session?.status);
     const player = session?.player;
     const alreadyAnswered = Boolean(player?.answeredCurrent);
-    const networkMessage =
-        screenState === "disconnected"
-            ? "Соединение потеряно. Пытаемся переподключиться."
-            : screenState === "connecting"
-                ? "Подключаемся к игре..."
-                : "";
+    const connectionMessage = getConnectionMessage(connectionState);
 
     async function handleJoin() {
+        if (joinLoading) return;
+
         if (!name.trim()) {
             setSessionError("Введите имя");
             return;
@@ -123,7 +168,7 @@ export default function JoinPage() {
             if (res?.code === "SESSION_NOT_FOUND") {
                 setSessionError("Сессия не найдена. Проверь код игры.");
             } else {
-                setSessionError(res?.error || "Не удалось подключиться");
+                setSessionError(getSocketErrorMessage(res));
             }
             return;
         }
@@ -138,7 +183,7 @@ export default function JoinPage() {
 
         const res = await sessionClient.submitAnswer(code, playerId, optionIndex);
         if (!res?.ok) {
-            setSessionError(res?.error || "Не удалось отправить ответ");
+            setSessionError(getSocketErrorMessage(res));
             return;
         }
 
@@ -164,7 +209,7 @@ export default function JoinPage() {
                     </p>
 
                     {isRejoining ? (
-                        <div className="empty-state">Восстанавливаем подключение после обновления страницы...</div>
+                        <div className="empty-state">Проверяем, есть ли сохраненное подключение к игре...</div>
                     ) : (
                         <>
                             <input
@@ -176,7 +221,11 @@ export default function JoinPage() {
                             />
 
                             <div className="button-row mt-16">
-                                <button className="btn btn-primary" onClick={handleJoin} disabled={joinLoading}>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleJoin}
+                                    disabled={joinLoading || isRejoining}
+                                >
                                     {joinLoading ? "Подключение..." : "Подключиться"}
                                 </button>
                             </div>
@@ -184,7 +233,7 @@ export default function JoinPage() {
                     )}
 
                     {sessionError ? <div className="inline-error mt-16">{sessionError}</div> : null}
-                    {networkMessage ? <div className="helper mt-16">{networkMessage}</div> : null}
+                    {connectionMessage ? <div className="helper mt-16">{connectionMessage}</div> : null}
 
                     <div className="mt-20 helper">
                         Лучше использовать короткие имена, чтобы они красиво смотрелись на экране гонки.
@@ -211,7 +260,7 @@ export default function JoinPage() {
                         <div className={statusView.className}>{statusView.text}</div>
                     </div>
 
-                    {networkMessage ? <div className="helper mt-16">{networkMessage}</div> : null}
+                    {connectionMessage ? <div className="helper mt-16">{connectionMessage}</div> : null}
                     {sessionError ? <div className="inline-error mt-16">{sessionError}</div> : null}
                 </section>
 
@@ -264,7 +313,7 @@ export default function JoinPage() {
                                             key={index}
                                             className="option-btn"
                                             onClick={() => submitAnswer(index)}
-                                            disabled={alreadyAnswered || screenState !== "connected"}
+                                            disabled={alreadyAnswered || connectionState !== "connected"}
                                             style={{
                                                 background: palette.bg,
                                                 borderColor: palette.border,

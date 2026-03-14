@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { sessionClient } from "../sessionClient";
 
@@ -89,22 +89,49 @@ export default function ScreenPage() {
     const { code } = useParams();
     const [session, setSession] = useState(null);
     const [error, setError] = useState("");
+    const screenJoinedRef = useRef(false);
+    const joiningScreenRef = useRef(false);
 
     useEffect(() => {
-        const unsubscribe = sessionClient.subscribeToSessionState((state) => {
+        async function connectScreen() {
+            if (screenJoinedRef.current || joiningScreenRef.current) return;
+
+            joiningScreenRef.current = true;
+            const res = await sessionClient.joinScreen(code);
+            joiningScreenRef.current = false;
+
+            if (!res?.ok) {
+                if (res?.code === "SOCKET_CONNECT_TIMEOUT" || res?.code === "SOCKET_CONNECT_ERROR") {
+                    setError("");
+                    return;
+                }
+
+                setError(res?.error || "Не удалось подключить экран");
+                return;
+            }
+
+            screenJoinedRef.current = true;
+            setError("");
+        }
+
+        const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
             setSession(state);
+            screenJoinedRef.current = true;
             setError("");
         });
 
-        async function connectScreen() {
-            const res = await sessionClient.joinScreen(code);
-            if (!res?.ok) {
-                setError(res?.error || "Не удалось подключить экран");
+        const unsubscribeConnection = sessionClient.subscribeToConnection((event) => {
+            if (event.type === "connect" && !screenJoinedRef.current) {
+                connectScreen();
             }
-        }
+        });
 
         connectScreen();
-        return unsubscribe;
+
+        return () => {
+            unsubscribeState();
+            unsubscribeConnection();
+        };
     }, [code]);
 
     const players = useMemo(() => session?.players || [], [session?.players]);
