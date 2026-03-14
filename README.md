@@ -1,21 +1,27 @@
-# kahoot-horses
+# derby-quiz
 
-Небольшой MVP викторины в стиле Kahoot с тремя ролями:
-- `teacher` создаёт и ведёт игру
-- `player` подключается с телефона и отвечает на вопросы
-- `screen` показывает общую гонку лошадей и итоговый podium
+Интерактивная викторина в стиле Kahoot с тремя ролями:
+- `teacher` открывает сессию и управляет игрой
+- `player` заходит с телефона и отвечает на вопросы
+- `screen` показывает общую гонку лошадей и финальный podium
 
-Стек:
+Текущая версия игры:
+- весь интерфейс переведён на казахский язык
+- вопросы хранятся напрямую в [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
+- поддерживаются длинные тексты для оқу сауаттылығы
+- поддерживаются изображения в самих вопросах и в вариантах ответа
+
+## Стек
 - `client`: React + Vite + Socket.IO client
 - `server`: Express + Socket.IO server
-- `questions.json`: контент вопросов
+- `questions.json`: нормализованный набор rich-вопросов для runtime
 
 ## Что уже есть
 - вход игроков по коду игры
 - восстановление игрока после refresh через `localStorage`
-- guarded state machine игры: `lobby -> question -> result -> lobby|finished`
+- state machine игры: `lobby -> question -> result -> lobby|finished`
 - единый источник вопросов в [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
-- серверная нормализация и валидация вопросов в [`server/questions.js`](/Users/kozi/Documents/kahoot-horses/server/questions.js)
+- серверная валидация rich-question schema в [`server/questions.js`](/Users/kozi/Documents/kahoot-horses/server/questions.js)
 - TTL cleanup для старых сессий
 - health/readiness endpoints: `/health`, `/ready`
 - unit и integration тесты для сервера
@@ -23,11 +29,15 @@
 
 ## Структура
 - [`client`](/Users/kozi/Documents/kahoot-horses/client) - интерфейсы teacher/player/screen
+- [`client/public/question-assets/modo-4e`](/Users/kozi/Documents/kahoot-horses/client/public/question-assets/modo-4e) - изображения для вопросов
+- [`client/src/components/QuestionContent.jsx`](/Users/kozi/Documents/kahoot-horses/client/src/components/QuestionContent.jsx) - общий renderer passage/image/options
+- [`client/src/i18n/kz.js`](/Users/kozi/Documents/kahoot-horses/client/src/i18n/kz.js) - казахский copy-слой
 - [`server/index.js`](/Users/kozi/Documents/kahoot-horses/server/index.js) - HTTP + Socket.IO transport
 - [`server/game.js`](/Users/kozi/Documents/kahoot-horses/server/game.js) - игровая доменная логика
 - [`server/config.js`](/Users/kozi/Documents/kahoot-horses/server/config.js) - env-конфиг
 - [`server/questions.js`](/Users/kozi/Documents/kahoot-horses/server/questions.js) - загрузка и валидация вопросов
-- [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) - набор вопросов
+- [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) - runtime-набор вопросов
+- [`content/modo-4e.docx`](/Users/kozi/Documents/kahoot-horses/content/modo-4e.docx) - исходный reference-файл с вопросами
 - [`scripts/dev.sh`](/Users/kozi/Documents/kahoot-horses/scripts/dev.sh) - локальный запуск `server + client`
 - [`package.json`](/Users/kozi/Documents/kahoot-horses/package.json) - корневые команды проекта
 
@@ -54,20 +64,42 @@ cd server
 npm start
 ```
 
-По умолчанию сервер стартует на `http://localhost:4000`.
-
 #### Клиент
 ```bash
 cd client
 npm run dev
 ```
 
-По умолчанию Vite поднимет клиент на `http://localhost:5173`.
-
 Если сервер доступен не на `http://localhost:4000`, перед запуском клиента задайте:
 ```bash
 VITE_SERVER_URL=http://localhost:4000 npm run dev
 ```
+
+## Контент
+Рабочий источник вопросов:
+- [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
+
+Этот файл уже содержит вопросы из:
+- [`content/modo-4e.docx`](/Users/kozi/Documents/kahoot-horses/content/modo-4e.docx)
+
+Важно:
+- `docx` не используется в runtime
+- в runtime сервер читает только [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
+- изображения для вопросов берутся из [`client/public/question-assets/modo-4e`](/Users/kozi/Documents/kahoot-horses/client/public/question-assets/modo-4e)
+- при изменении контента нужно редактировать [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) вручную, сверяясь с `docx`
+
+## Формат вопроса
+Каждый вопрос в [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json) содержит:
+- `id`
+- `type`: `mcq | reading_mcq | image_mcq`
+- `stem`
+- `passageTitle`
+- `passage`
+- `image`
+- `options`: массив `{ label, text, image }`
+- `correctIndex`
+- `groupId`
+- `sourceMeta`
 
 ## Переменные окружения сервера
 - `PORT` - порт сервера, по умолчанию `4000`
@@ -104,6 +136,7 @@ npm test
 
 `npm test` запускает:
 - unit-тесты доменной логики сессий
+- unit-тесты loader'а вопросов
 - integration test для Socket.IO сценария teacher/player
 
 ## Игровой сценарий
@@ -112,7 +145,7 @@ npm test
 3. Открой `/screen/:code` на проекторе
 4. Запускай вопрос, показывай результаты, переходи к следующему
 
-## Технические ограничения текущей версии
+## Ограничения текущей версии
 - сессии хранятся in-memory и пропадают при рестарте сервера
 - авторизация teacher/player не реализована
-- набор вопросов статический, хранится в JSON без админки и персистентного хранилища
+- контентный слой не имеет админки или автоматического импорта из DOCX

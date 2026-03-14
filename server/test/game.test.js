@@ -6,15 +6,35 @@ import { createSessionManager } from "../game.js";
 const sampleQuestions = [
     {
         id: "q1",
-        text: "2 + 2",
-        options: ["3", "4", "5"],
+        type: "mcq",
+        stem: "2 + 2",
+        passageTitle: null,
+        passage: null,
+        image: null,
+        options: [
+            { label: "A", text: "3", image: null },
+            { label: "B", text: "4", image: null },
+            { label: "C", text: "5", image: null },
+        ],
         correctIndex: 1,
+        groupId: null,
+        sourceMeta: null,
     },
     {
         id: "q2",
-        text: "3 + 3",
-        options: ["5", "6", "7"],
+        type: "mcq",
+        stem: "3 + 3",
+        passageTitle: null,
+        passage: null,
+        image: null,
+        options: [
+            { label: "A", text: "5", image: null },
+            { label: "B", text: "6", image: null },
+            { label: "C", text: "7", image: null },
+        ],
         correctIndex: 1,
+        groupId: null,
+        sourceMeta: null,
     },
 ];
 

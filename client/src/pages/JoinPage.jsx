@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+
+import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
+import { getConnectionMessage, getSocketErrorMessage, getStatusView, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
 
 const OPTION_COLORS = [
@@ -7,51 +10,11 @@ const OPTION_COLORS = [
     { bg: "#ecfdf5", border: "#bbf7d0" },
     { bg: "#fff7ed", border: "#fed7aa" },
     { bg: "#faf5ff", border: "#e9d5ff" },
+    { bg: "#fef2f2", border: "#fecaca" },
 ];
-
-function getStatusLabel(status) {
-    switch (status) {
-        case "question":
-            return { text: "Отвечай сейчас", className: "status-pill status-question" };
-        case "result":
-            return { text: "Результаты", className: "status-pill status-result" };
-        case "finished":
-            return { text: "Игра завершена", className: "status-pill status-finished" };
-        default:
-            return { text: "Ожидание старта", className: "status-pill status-lobby" };
-    }
-}
 
 function storageKey(code) {
     return `horse-quiz-player:${code}`;
-}
-
-function getConnectionMessage(connectionState) {
-    if (connectionState === "connecting") {
-        return `Подключаемся к серверу игры (${sessionClient.serverUrl})...`;
-    }
-
-    if (connectionState === "disconnected") {
-        return `Нет соединения с сервером игры (${sessionClient.serverUrl}).`;
-    }
-
-    return "";
-}
-
-function getSocketErrorMessage(response) {
-    if (response?.code === "SOCKET_CONNECT_TIMEOUT") {
-        return "Сервер игры не ответил вовремя. Проверь, что сервер запущен и доступен в локальной сети.";
-    }
-
-    if (response?.code === "SOCKET_CONNECT_ERROR") {
-        return "Не удалось подключиться к серверу игры. Проверь IP-адрес и порт сервера.";
-    }
-
-    if (response?.code === "ACK_TIMEOUT") {
-        return "Сервер игры не ответил на запрос подключения. Попробуй ещё раз.";
-    }
-
-    return response?.error || "Не удалось подключиться";
 }
 
 export default function JoinPage() {
@@ -93,7 +56,7 @@ export default function JoinPage() {
             if (res?.code === "SESSION_NOT_FOUND" || res?.code === "PLAYER_NOT_FOUND") {
                 localStorage.removeItem(storageKey(code));
                 if (res?.code === "SESSION_NOT_FOUND") {
-                    setSessionError("Сессия не найдена. Проверь код игры.");
+                    setSessionError(kz.errors.sessionNotFound);
                 }
             }
 
@@ -118,9 +81,9 @@ export default function JoinPage() {
             }
 
             if (state?.player?.lastAnswerCorrect === true && state?.status === "result") {
-                setAnswerFeedback("Правильно");
+                setAnswerFeedback(kz.answerFeedback.correct);
             } else if (state?.player?.lastAnswerCorrect === false && state?.status === "result") {
-                setAnswerFeedback("Неправильно");
+                setAnswerFeedback(kz.answerFeedback.incorrect);
             } else if (state?.status === "question") {
                 setAnswerFeedback("");
             }
@@ -145,16 +108,16 @@ export default function JoinPage() {
         };
     }, [code, joined]);
 
-    const statusView = getStatusLabel(session?.status);
+    const statusView = getStatusView(session?.status);
     const player = session?.player;
     const alreadyAnswered = Boolean(player?.answeredCurrent);
-    const connectionMessage = getConnectionMessage(connectionState);
+    const connectionMessage = getConnectionMessage(connectionState, sessionClient.serverUrl);
 
     async function handleJoin() {
         if (joinLoading) return;
 
         if (!name.trim()) {
-            setSessionError("Введите имя");
+            setSessionError(kz.errors.enterName);
             return;
         }
 
@@ -166,7 +129,7 @@ export default function JoinPage() {
 
         if (!res?.ok) {
             if (res?.code === "SESSION_NOT_FOUND") {
-                setSessionError("Сессия не найдена. Проверь код игры.");
+                setSessionError(kz.errors.sessionNotFound);
             } else {
                 setSessionError(getSocketErrorMessage(res));
             }
@@ -188,33 +151,33 @@ export default function JoinPage() {
         }
 
         setSessionError("");
-        setAnswerFeedback(res.isCorrect ? "Правильно" : "Неправильно");
+        setAnswerFeedback(res.isCorrect ? kz.answerFeedback.correct : kz.answerFeedback.incorrect);
     }
 
     const titleText = useMemo(() => {
-        if (!joined) return "Вход в игру";
-        if (session?.status === "finished") return "Спасибо за игру";
-        return "Жайлау Quiz Race";
+        if (!joined) return kz.join.entryTitle;
+        if (session?.status === "finished") return kz.join.thankYou;
+        return kz.appName;
     }, [joined, session?.status]);
 
     if (!joined) {
         return (
             <div className="center-shell">
                 <div className="center-card">
-                    <div className="badge badge-purple">Код игры: {code}</div>
+                    <div className="badge badge-purple">
+                        {kz.labels.code}: {code}
+                    </div>
 
                     <h1 className="center-title mt-16">{titleText}</h1>
-                    <p className="center-subtitle">
-                        Введи имя и подключись к сессии. После этого жди вопрос от учителя.
-                    </p>
+                    <p className="center-subtitle">{kz.join.subtitle}</p>
 
                     {isRejoining ? (
-                        <div className="empty-state">Проверяем, есть ли сохраненное подключение к игре...</div>
+                        <div className="empty-state">{kz.join.restore}</div>
                     ) : (
                         <>
                             <input
                                 className="input"
-                                placeholder="Например: Аружан"
+                                placeholder={kz.join.placeholder}
                                 value={name}
                                 onChange={(event) => setName(event.target.value)}
                                 maxLength={24}
@@ -226,7 +189,7 @@ export default function JoinPage() {
                                     onClick={handleJoin}
                                     disabled={joinLoading || isRejoining}
                                 >
-                                    {joinLoading ? "Подключение..." : "Подключиться"}
+                                    {joinLoading ? kz.buttons.connecting : kz.buttons.connect}
                                 </button>
                             </div>
                         </>
@@ -235,9 +198,7 @@ export default function JoinPage() {
                     {sessionError ? <div className="inline-error mt-16">{sessionError}</div> : null}
                     {connectionMessage ? <div className="helper mt-16">{connectionMessage}</div> : null}
 
-                    <div className="mt-20 helper">
-                        Лучше использовать короткие имена, чтобы они красиво смотрелись на экране гонки.
-                    </div>
+                    <div className="mt-20 helper">{kz.join.shortNames}</div>
                 </div>
             </div>
         );
@@ -249,11 +210,11 @@ export default function JoinPage() {
                 <section className="hero-card">
                     <div className="hero-row">
                         <div>
-                            <div className="hero-kicker">Player view</div>
+                            <div className="hero-kicker">Ойыншы экраны</div>
                             <h1 className="hero-title">{titleText}</h1>
                             <p className="hero-subtitle">
                                 {player?.name ? `${player.name}, ` : ""}
-                                отвечай на вопросы с телефона и смотри, как твоя лошадь продвигается вперед.
+                                сұрақтарға телефоннан жауап беріп, тұлпарыңның жарыста қалай алға шыққанын бақыла.
                             </p>
                         </div>
 
@@ -267,14 +228,12 @@ export default function JoinPage() {
                 <section className="card mt-24">
                     <div className="section-header">
                         <div>
-                            <h2 className="card-title">Твой прогресс</h2>
-                            <p className="card-subtitle">
-                                Очки начисляются за правильные ответы.
-                            </p>
+                            <h2 className="card-title">{kz.join.progressTitle}</h2>
+                            <p className="card-subtitle">{kz.join.progressSubtitle}</p>
                         </div>
 
                         <div className="badge badge-light">
-                            {player?.score ?? 0} очков
+                            {player?.score ?? 0} {kz.labels.points}
                         </div>
                     </div>
 
@@ -290,27 +249,20 @@ export default function JoinPage() {
                 </section>
 
                 <section className="card mt-24">
-                    {session?.status === "lobby" && (
-                        <div className="empty-state">
-                            Учитель еще не запустил вопрос. Подожди немного.
-                        </div>
-                    )}
+                    {session?.status === "lobby" && <div className="empty-state">{kz.join.lobby}</div>}
 
                     {session?.status === "question" && session?.currentQuestion && (
-                        <div className="question-box">
-                            <div className="badge badge-light">
-                                Вопрос {(session.currentQuestionIndex ?? 0) + 1} / {session.totalQuestions}
-                            </div>
-
-                            <h2 className="question-title mt-16">{session.currentQuestion.text}</h2>
-
-                            <div className="option-grid">
+                        <QuestionContent
+                            question={session.currentQuestion}
+                            badge={`${kz.labels.question} ${(session.currentQuestionIndex ?? 0) + 1} / ${session.totalQuestions}`}
+                        >
+                            <div className="option-grid mt-16">
                                 {session.currentQuestion.options.map((option, index) => {
                                     const palette = OPTION_COLORS[index % OPTION_COLORS.length];
 
                                     return (
                                         <button
-                                            key={index}
+                                            key={`${option.label}-${index}`}
                                             className="option-btn"
                                             onClick={() => submitAnswer(index)}
                                             disabled={alreadyAnswered || connectionState !== "connected"}
@@ -320,10 +272,7 @@ export default function JoinPage() {
                                                 opacity: alreadyAnswered ? 0.7 : 1,
                                             }}
                                         >
-                                            <span className="option-letter">
-                                                {String.fromCharCode(65 + index)}
-                                            </span>
-                                            {option}
+                                            <QuestionOptionContent option={option} index={index} />
                                         </button>
                                     );
                                 })}
@@ -331,46 +280,40 @@ export default function JoinPage() {
 
                             <div className="mt-16">
                                 {alreadyAnswered ? (
-                                    <div className="badge badge-success">Ответ отправлен</div>
+                                    <div className="badge badge-success">{kz.join.answerSent}</div>
                                 ) : (
-                                    <div className="helper">
-                                        Выбери один вариант. Ответ можно отправить только один раз.
-                                    </div>
+                                    <div className="helper">{kz.join.answerHint}</div>
                                 )}
                             </div>
-                        </div>
+                        </QuestionContent>
                     )}
 
                     {session?.status === "result" && (
                         <div className="question-box">
-                            <h2 className="question-title">Результат</h2>
+                            <h2 className="question-title">{kz.join.resultTitle}</h2>
                             <div
                                 className={
-                                    answerFeedback === "Правильно"
+                                    answerFeedback === kz.answerFeedback.correct
                                         ? "badge badge-success"
                                         : "badge badge-danger"
                                 }
                                 style={{ fontSize: 16, padding: "12px 16px" }}
                             >
-                                {answerFeedback || "Ответ принят"}
+                                {answerFeedback || kz.join.resultAccepted}
                             </div>
 
-                            <div className="mt-16 helper">
-                                Смотри на общий экран — там видно положение всех лошадей.
-                            </div>
+                            <div className="mt-16 helper">{kz.join.resultHint}</div>
                         </div>
                     )}
 
                     {session?.status === "finished" && (
                         <div className="question-box">
-                            <h2 className="question-title">Игра завершена</h2>
+                            <h2 className="question-title">{kz.join.finishedTitle}</h2>
                             <div className="badge badge-purple" style={{ fontSize: 16, padding: "12px 16px" }}>
-                                Итог: {player?.score ?? 0} очков
+                                {player?.score ?? 0} {kz.labels.points}
                             </div>
 
-                            <div className="mt-16 helper">
-                                Учитель может перезапустить игру или начать новую сессию.
-                            </div>
+                            <div className="mt-16 helper">{kz.join.finishedHint}</div>
                         </div>
                     )}
                 </section>

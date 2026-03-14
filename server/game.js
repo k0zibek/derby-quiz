@@ -40,9 +40,9 @@ function clamp(value, min, max) {
 }
 
 function safePlayerName(name) {
-    if (typeof name !== "string") return "Игрок";
+    if (typeof name !== "string") return "Ойыншы";
     const trimmed = name.trim().slice(0, 24);
-    return trimmed || "Игрок";
+    return trimmed || "Ойыншы";
 }
 
 function calculatePoints({ isCorrect }) {
@@ -58,8 +58,14 @@ function getPublicQuestion(question) {
 
     return {
         id: question.id,
-        text: question.text,
-        options: question.options,
+        type: question.type,
+        stem: question.stem,
+        passageTitle: question.passageTitle,
+        passage: question.passage,
+        image: question.image,
+        options: question.options.map((option) => ({ ...option })),
+        groupId: question.groupId,
+        sourceMeta: question.sourceMeta ? { ...question.sourceMeta } : null,
     };
 }
 
@@ -67,9 +73,7 @@ function getTeacherQuestion(question) {
     if (!question) return null;
 
     return {
-        id: question.id,
-        text: question.text,
-        options: question.options,
+        ...getPublicQuestion(question),
         correctIndex: question.correctIndex,
     };
 }
@@ -109,9 +113,15 @@ export function createSessionManager(options = {}) {
     function cloneQuestions() {
         return initialQuestions.map((question) => ({
             id: question.id,
-            text: question.text,
-            options: [...question.options],
+            type: question.type,
+            stem: question.stem,
+            passageTitle: question.passageTitle,
+            passage: question.passage,
+            image: question.image,
+            options: question.options.map((option) => ({ ...option })),
             correctIndex: question.correctIndex,
+            groupId: question.groupId,
+            sourceMeta: question.sourceMeta ? { ...question.sourceMeta } : null,
         }));
     }
 
@@ -157,7 +167,7 @@ export function createSessionManager(options = {}) {
 
                 return {
                     index,
-                    text: optionText,
+                    option: { ...optionText },
                     count,
                     isCorrect: currentQuestion.correctIndex === index,
                 };

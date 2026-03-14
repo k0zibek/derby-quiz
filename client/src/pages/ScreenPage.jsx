@@ -1,19 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { sessionClient } from "../sessionClient";
 
-function getStatusText(status) {
-    switch (status) {
-        case "question":
-            return "Идет вопрос";
-        case "result":
-            return "Результаты вопроса";
-        case "finished":
-            return "Финал";
-        default:
-            return "Сбор игроков";
-    }
-}
+import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
+import { getRaceStatusText, kz } from "../i18n/kz";
+import { sessionClient } from "../sessionClient";
 
 function PodiumCard({ player, rank, emoji, ringColor }) {
     if (!player) {
@@ -22,7 +12,7 @@ function PodiumCard({ player, rank, emoji, ringColor }) {
                 <div className="podium-rank" style={{ background: "#f3f4f6", color: "#6b7280" }}>
                     {rank}
                 </div>
-                <div className="helper">Пока пусто</div>
+                <div className="helper">Әзірге бос</div>
             </div>
         );
     }
@@ -53,7 +43,9 @@ function PodiumCard({ player, rank, emoji, ringColor }) {
             </div>
 
             <div style={{ fontWeight: 800, fontSize: 18 }}>{player.name}</div>
-            <div className="helper">{player.score} очков</div>
+            <div className="helper">
+                {player.score} {kz.labels.points}
+            </div>
         </div>
     );
 }
@@ -77,7 +69,7 @@ function Lane({ lane }) {
                         #{lane.rank} {lane.player.name}
                     </div>
                     <div className="horse-meta">
-                        {lane.player.score} очков · прогресс {lane.player.progress}%
+                        {lane.player.score} {kz.labels.points} · {kz.labels.progress.toLowerCase()} {lane.player.progress}%
                     </div>
                 </div>
             </div>
@@ -106,7 +98,7 @@ export default function ScreenPage() {
                     return;
                 }
 
-                setError(res?.error || "Не удалось подключить экран");
+                setError(res?.error || kz.errors.connectScreen);
                 return;
             }
 
@@ -149,17 +141,19 @@ export default function ScreenPage() {
             <div className="race-shell">
                 <section className="race-header">
                     <div>
-                        <div className="badge badge-purple">Экран гонки · код {code}</div>
-                        <h1 className="race-title">Жайлау жарысы</h1>
+                        <div className="badge badge-purple">
+                            {kz.labels.raceScreen} · {kz.labels.code.toLowerCase()} {code}
+                        </div>
+                        <h1 className="race-title">{kz.screen.title}</h1>
                         <p className="race-subtitle">
-                            {getStatusText(session?.status)} · ответили {session?.answeredCount ?? 0} из{" "}
+                            {getRaceStatusText(session?.status)} · {kz.labels.answered.toLowerCase()} {session?.answeredCount ?? 0} /{" "}
                             {session?.totalPlayers ?? 0}
                         </p>
                     </div>
 
                     <div className="button-row">
                         <div className="badge badge-light">
-                            Вопрос {(session?.currentQuestionIndex ?? 0) + 1} / {session?.totalQuestions ?? 0}
+                            {kz.labels.question} {(session?.currentQuestionIndex ?? 0) + 1} / {session?.totalQuestions ?? 0}
                         </div>
                         <div
                             className={
@@ -170,7 +164,7 @@ export default function ScreenPage() {
                                         : "badge badge-light"
                             }
                         >
-                            {getStatusText(session?.status)}
+                            {getRaceStatusText(session?.status)}
                         </div>
                     </div>
                 </section>
@@ -181,8 +175,8 @@ export default function ScreenPage() {
                     <section className="card mt-20">
                         <div className="section-header">
                             <div>
-                                <h2 className="card-title">Победители</h2>
-                                <p className="card-subtitle">Топ игроков этой сессии.</p>
+                                <h2 className="card-title">{kz.labels.winners}</h2>
+                                <p className="card-subtitle">{kz.labels.topPlayers}</p>
                             </div>
                         </div>
 
@@ -215,12 +209,10 @@ export default function ScreenPage() {
 
                         {lanes.length === 0 ? (
                             <div className="empty-state" style={{ margin: 12 }}>
-                                Игроки еще не подключились. Покажите QR-код ученикам.
+                                {kz.screen.empty}
                             </div>
                         ) : (
-                            lanes.map((lane) => (
-                                <Lane key={lane.player.id} lane={lane} />
-                            ))
+                            lanes.map((lane) => <Lane key={lane.player.id} lane={lane} />)
                         )}
                     </div>
                 </section>
@@ -229,28 +221,24 @@ export default function ScreenPage() {
                     <section className="card mt-20">
                         <div className="section-header">
                             <div>
-                                <h2 className="card-title">Текущий вопрос</h2>
-                                <p className="card-subtitle">
-                                    Ученики отвечают с телефона. Гонка обновляется автоматически.
-                                </p>
+                                <h2 className="card-title">{kz.labels.currentQuestion}</h2>
+                                <p className="card-subtitle">{kz.screen.currentQuestionSubtitle}</p>
                             </div>
                         </div>
 
-                        <div className="question-box">
-                            <h3 className="question-title">{session.currentQuestion.text}</h3>
-
-                            <div className="option-grid">
+                        <QuestionContent
+                            question={session.currentQuestion}
+                            badge={`${kz.labels.question} ${(session?.currentQuestionIndex ?? 0) + 1} / ${session?.totalQuestions ?? 0}`}
+                            titleTag="h3"
+                        >
+                            <div className="option-grid mt-16">
                                 {session.currentQuestion.options.map((option, index) => (
-                                    <div key={index} className="answer-card">
-                                        <div className="answer-top">
-                                            <div className="answer-title">
-                                                {String.fromCharCode(65 + index)}. {option}
-                                            </div>
-                                        </div>
+                                    <div key={`${option.label}-${index}`} className="answer-card">
+                                        <QuestionOptionContent option={option} index={index} />
                                     </div>
                                 ))}
                             </div>
-                        </div>
+                        </QuestionContent>
                     </section>
                 )}
             </div>

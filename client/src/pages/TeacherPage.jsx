@@ -1,34 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
-import { sessionClient } from "../sessionClient";
 
-function getStatusLabel(status) {
-    switch (status) {
-        case "question":
-            return { text: "Идет вопрос", className: "status-pill status-question" };
-        case "result":
-            return { text: "Показ результатов", className: "status-pill status-result" };
-        case "finished":
-            return { text: "Игра завершена", className: "status-pill status-finished" };
-        default:
-            return { text: "Лобби", className: "status-pill status-lobby" };
-    }
-}
+import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
+import { getConnectionMessage, getStatusView, kz } from "../i18n/kz";
+import { sessionClient } from "../sessionClient";
 
 function copyText(text) {
     navigator.clipboard.writeText(text).catch(() => { });
-}
-
-function getConnectionMessage(connectionState) {
-    if (connectionState === "connecting") {
-        return `Подключаемся к серверу игры (${sessionClient.serverUrl})...`;
-    }
-
-    if (connectionState === "disconnected") {
-        return `Нет соединения с сервером игры (${sessionClient.serverUrl}). Ждем переподключения.`;
-    }
-
-    return "";
 }
 
 export default function TeacherPage() {
@@ -59,7 +37,7 @@ export default function TeacherPage() {
                 return;
             }
 
-            setError(res?.error || "Не удалось создать сессию");
+            setError(res?.error || kz.errors.createSession);
         }
 
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
@@ -97,16 +75,16 @@ export default function TeacherPage() {
         return `${window.location.origin}/screen/${code}`;
     }, [code]);
 
-    const statusView = getStatusLabel(session?.status);
+    const statusView = getStatusView(session?.status);
     const currentQuestionNumber = (session?.currentQuestionIndex ?? 0) + 1;
     const totalQuestions = session?.totalQuestions ?? 0;
-    const connectionMessage = getConnectionMessage(connectionState);
+    const connectionMessage = getConnectionMessage(connectionState, sessionClient.serverUrl);
 
     async function handleAction(action) {
         setError("");
         const res = await action();
         if (!res?.ok) {
-            setError(res?.error || "Операция не выполнена");
+            setError(res?.error || kz.errors.operationFailed);
         }
     }
 
@@ -116,39 +94,38 @@ export default function TeacherPage() {
                 <section className="hero-card">
                     <div className="hero-row">
                         <div>
-                            <div className="hero-kicker">Teacher dashboard</div>
-                            <h1 className="hero-title">Жайлау Quiz Race</h1>
-                            <p className="hero-subtitle">
-                                Ученики заходят по QR-коду, отвечают с телефона, а ты видишь
-                                прогресс всей группы и гонку лошадей в реальном времени.
-                            </p>
+                            <div className="hero-kicker">{kz.teacher.kicker}</div>
+                            <h1 className="hero-title">{kz.appName}</h1>
+                            <p className="hero-subtitle">{kz.teacher.subtitle}</p>
                         </div>
 
                         <div>
-                            <div className="badge">Код игры: {code || "..."}</div>
+                            <div className="badge">
+                                {kz.labels.code}: {code || "..."}
+                            </div>
                         </div>
                     </div>
 
                     <div className="stat-grid">
                         <div className="stat-card">
-                            <div className="stat-label">Статус</div>
+                            <div className="stat-label">{kz.labels.status}</div>
                             <div className="stat-value" style={{ fontSize: 20 }}>
-                                {session?.status || "lobby"}
+                                {statusView.text}
                             </div>
                         </div>
 
                         <div className="stat-card">
-                            <div className="stat-label">Игроков</div>
+                            <div className="stat-label">{kz.labels.players}</div>
                             <div className="stat-value">{session?.totalPlayers ?? 0}</div>
                         </div>
 
                         <div className="stat-card">
-                            <div className="stat-label">Ответили</div>
+                            <div className="stat-label">{kz.labels.answered}</div>
                             <div className="stat-value">{session?.answeredCount ?? 0}</div>
                         </div>
 
                         <div className="stat-card">
-                            <div className="stat-label">Вопрос</div>
+                            <div className="stat-label">{kz.labels.question}</div>
                             <div className="stat-value">
                                 {totalQuestions ? `${currentQuestionNumber}/${totalQuestions}` : "0/0"}
                             </div>
@@ -163,10 +140,8 @@ export default function TeacherPage() {
                     <section className="card card-strong">
                         <div className="section-header">
                             <div>
-                                <h2 className="card-title">Подключение учеников</h2>
-                                <p className="card-subtitle">
-                                    Покажи QR-код на проекторе или отправь ссылку вручную.
-                                </p>
+                                <h2 className="card-title">{kz.teacher.joinTitle}</h2>
+                                <p className="card-subtitle">{kz.teacher.joinSubtitle}</p>
                             </div>
                             <div className={statusView.className}>{statusView.text}</div>
                         </div>
@@ -176,29 +151,29 @@ export default function TeacherPage() {
                         </div>
 
                         <div className="mt-16">
-                            <div className="helper">Ссылка для входа учеников</div>
-                            <div className="link-box mt-12">{joinUrl || "Создается..."}</div>
+                            <div className="helper">{kz.labels.linkForPlayers}</div>
+                            <div className="link-box mt-12">{joinUrl || "..."}</div>
                             <div className="inline-actions">
                                 <button
                                     className="btn btn-neutral"
                                     onClick={() => copyText(joinUrl)}
                                     disabled={!joinUrl}
                                 >
-                                    Скопировать ссылку
+                                    {kz.buttons.copyLink}
                                 </button>
                             </div>
                         </div>
 
                         <div className="mt-20">
-                            <div className="helper">Ссылка для большого экрана гонки</div>
-                            <div className="link-box mt-12">{screenUrl || "Создается..."}</div>
+                            <div className="helper">{kz.labels.linkForScreen}</div>
+                            <div className="link-box mt-12">{screenUrl || "..."}</div>
                             <div className="inline-actions">
                                 <button
                                     className="btn btn-neutral"
                                     onClick={() => copyText(screenUrl)}
                                     disabled={!screenUrl}
                                 >
-                                    Скопировать экран
+                                    {kz.buttons.copyScreen}
                                 </button>
                                 <a
                                     href={screenUrl || "#"}
@@ -210,7 +185,7 @@ export default function TeacherPage() {
                                         if (!screenUrl) event.preventDefault();
                                     }}
                                 >
-                                    Открыть экран гонки
+                                    {kz.buttons.openScreen}
                                 </a>
                             </div>
                         </div>
@@ -219,11 +194,8 @@ export default function TeacherPage() {
                     <section className="card">
                         <div className="section-header">
                             <div>
-                                <h2 className="card-title">Управление игрой</h2>
-                                <p className="card-subtitle">
-                                    Базовый сценарий: запустить вопрос → показать результаты →
-                                    следующий вопрос.
-                                </p>
+                                <h2 className="card-title">{kz.teacher.controlsTitle}</h2>
+                                <p className="card-subtitle">{kz.teacher.controlsSubtitle}</p>
                             </div>
                         </div>
 
@@ -233,7 +205,7 @@ export default function TeacherPage() {
                                 onClick={() => handleAction(() => sessionClient.startQuestion(code))}
                                 disabled={!session?.canStart}
                             >
-                                Запустить вопрос
+                                {kz.buttons.startQuestion}
                             </button>
 
                             <button
@@ -241,7 +213,7 @@ export default function TeacherPage() {
                                 onClick={() => handleAction(() => sessionClient.showResults(code))}
                                 disabled={!session?.canShowResults}
                             >
-                                Показать результаты
+                                {kz.buttons.showResults}
                             </button>
 
                             <button
@@ -249,7 +221,7 @@ export default function TeacherPage() {
                                 onClick={() => handleAction(() => sessionClient.nextQuestion(code))}
                                 disabled={!session?.canGoNext}
                             >
-                                Следующий вопрос
+                                {kz.buttons.nextQuestion}
                             </button>
 
                             <button
@@ -257,34 +229,34 @@ export default function TeacherPage() {
                                 onClick={() => handleAction(() => sessionClient.resetGame(code))}
                                 disabled={!session?.canReset}
                             >
-                                Сбросить игру
+                                {kz.buttons.resetGame}
                             </button>
                         </div>
 
                         <div className="mt-24">
-                            <div className="helper">Текущий вопрос</div>
+                            <div className="helper">{kz.labels.currentQuestion}</div>
 
-                            <div className="question-box mt-12">
+                            <div className="mt-12">
                                 {session?.currentQuestion ? (
-                                    <>
-                                        <h3 className="question-title">{session.currentQuestion.text}</h3>
-
-                                        <div className="option-grid">
+                                    <QuestionContent
+                                        question={session.currentQuestion}
+                                        badge={`${kz.labels.question} ${currentQuestionNumber} / ${totalQuestions}`}
+                                        titleTag="h3"
+                                    >
+                                        <div className="option-grid mt-16">
                                             {session.currentQuestion.options.map((option, index) => {
                                                 const stat = session.optionStats?.find((item) => item.index === index);
 
                                                 return (
-                                                    <div key={index} className="answer-card">
+                                                    <div key={`${option.label}-${index}`} className="answer-card">
                                                         <div className="answer-top">
-                                                            <div className="answer-title">
-                                                                {String.fromCharCode(65 + index)}. {option}
-                                                            </div>
+                                                            <QuestionOptionContent option={option} index={index} />
                                                             <div
                                                                 className={
                                                                     stat?.isCorrect ? "badge badge-success" : "badge badge-light"
                                                                 }
                                                             >
-                                                                {stat?.count ?? 0} ответов
+                                                                {stat?.count ?? 0} {kz.labels.answerCount}
                                                             </div>
                                                         </div>
 
@@ -304,11 +276,9 @@ export default function TeacherPage() {
                                                 );
                                             })}
                                         </div>
-                                    </>
+                                    </QuestionContent>
                                 ) : (
-                                    <div className="empty-state">
-                                        Вопрос пока не активен. Запусти игру, когда все подключатся.
-                                    </div>
+                                    <div className="empty-state">{kz.teacher.currentQuestionEmpty}</div>
                                 )}
                             </div>
                         </div>
