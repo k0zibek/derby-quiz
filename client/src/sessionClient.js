@@ -107,11 +107,11 @@ export const sessionClient = {
     ensureConnected,
     subscribeToSessionState,
     subscribeToConnection,
-    createTeacherSession() {
-        return emitWithAck("teacher:createSession");
+    createTeacherSession(accessPin) {
+        return emitWithAck("teacher:createSession", { accessPin });
     },
-    joinTeacherSession(code) {
-        return emitWithAck("teacher:joinSession", { code });
+    joinTeacherSession(code, teacherToken) {
+        return emitWithAck("teacher:joinSession", { code, teacherToken });
     },
     joinScreen(code) {
         return emitWithAck("screen:join", { code });
@@ -119,22 +119,22 @@ export const sessionClient = {
     joinPlayer(code, name) {
         return emitWithAck("player:join", { code, name });
     },
-    rejoinPlayer(code, playerId) {
-        return emitWithAck("player:rejoin", { code, playerId });
+    rejoinPlayer(code, playerId, playerToken) {
+        return emitWithAck("player:rejoin", { code, playerId, playerToken });
     },
-    startQuestion(code) {
-        return emitWithAck("teacher:startQuestion", { code });
+    startQuestion(code, teacherToken) {
+        return emitWithAck("teacher:startQuestion", { code, teacherToken });
     },
-    showResults(code) {
-        return emitWithAck("teacher:showResults", { code });
+    showResults(code, teacherToken) {
+        return emitWithAck("teacher:showResults", { code, teacherToken });
     },
-    nextQuestion(code) {
-        return emitWithAck("teacher:nextQuestion", { code });
+    nextQuestion(code, teacherToken) {
+        return emitWithAck("teacher:nextQuestion", { code, teacherToken });
     },
-    resetGame(code) {
-        return emitWithAck("teacher:resetGame", { code });
+    resetGame(code, teacherToken) {
+        return emitWithAck("teacher:resetGame", { code, teacherToken });
     },
-    submitAnswer(code, playerId, optionIndex) {
-        return emitWithAck("player:submitAnswer", { code, playerId, optionIndex });
+    submitAnswer(code, playerId, playerToken, optionIndex) {
+        return emitWithAck("player:submitAnswer", { code, playerId, playerToken, optionIndex });
     },
 };

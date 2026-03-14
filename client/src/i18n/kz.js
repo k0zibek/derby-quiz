@@ -20,6 +20,7 @@ export const kz = {
     buttons: {
         connect: "Қосылу",
         connecting: "Қосылып жатыр...",
+        authorizeTeacher: "Кіру",
         startQuestion: "Сұрақты бастау",
         showResults: "Нәтижені көрсету",
         nextQuestion: "Келесі сұрақ",
@@ -30,6 +31,12 @@ export const kz = {
     },
     teacher: {
         kicker: "Мұғалім панелі",
+        accessTitle: "Мұғалімге кіру",
+        accessSubtitle:
+            "Ойын жүргізу үшін мұғалімнің PIN-кодын енгізіңіз. Оқушылар бұл бөлімге кірмеуі керек.",
+        accessPlaceholder: "Мұғалім PIN-коды",
+        accessHint:
+            "Егер PIN-код орнатылмаған болса, сервер іске қосылған терминалда көрсетілген кодты пайдаланыңыз.",
         subtitle:
             "Оқушылар QR-кодпен кіріп, телефоннан жауап береді, ал сен бүкіл топтың нәтижесі мен жарысты бір экраннан көресің.",
         joinTitle: "Оқушыларды қосу",
@@ -80,6 +87,8 @@ export const kz = {
         connectError:
             "Ойын серверіне қосылу мүмкін болмады. Сервердің IP-мекенжайы мен портын тексеріңіз.",
         ackTimeout: "Қосылу сұрағына уақытында жауап келмеді. Қайтадан байқап көріңіз.",
+        teacherAccessDenied: "Мұғалімнің PIN-коды қате.",
+        unauthorized: "Сессия кілті жарамсыз немесе ескірген. Қайта кіріп көріңіз.",
         genericJoin: "Қосылу сәтсіз аяқталды",
     },
     errors: {
@@ -126,6 +135,14 @@ export function getSocketErrorMessage(response) {
 
     if (response?.code === "ACK_TIMEOUT") {
         return kz.network.ackTimeout;
+    }
+
+    if (response?.code === "TEACHER_ACCESS_DENIED") {
+        return kz.network.teacherAccessDenied;
+    }
+
+    if (response?.code === "UNAUTHORIZED") {
+        return kz.network.unauthorized;
     }
 
     return response?.error || kz.network.genericJoin;

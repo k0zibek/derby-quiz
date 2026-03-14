@@ -13,6 +13,8 @@ export function createError(code, error) {
     return { ok: false, code, error };
 }
 
+const UNAUTHORIZED_ERROR = () => createError("UNAUTHORIZED", "Authorization failed");
+
 function createOk(payload = {}) {
     return { ok: true, ...payload };
 }
@@ -98,6 +100,23 @@ function getTeacherControls(status) {
     };
 }
 
+function serializePlayer(player) {
+    if (!player) return null;
+
+    return {
+        id: player.id,
+        name: player.name,
+        score: player.score,
+        progress: player.progress,
+        color: player.color,
+        connected: player.connected,
+        answeredCurrent: player.answeredCurrent,
+        selectedOption: player.selectedOption,
+        lastAnswerCorrect: player.lastAnswerCorrect,
+        joinedAt: player.joinedAt,
+    };
+}
+
 export function createSessionManager(options = {}) {
     const {
         initialQuestions = defaultQuestions,
@@ -106,6 +125,8 @@ export function createSessionManager(options = {}) {
         now = () => Date.now(),
         createCode = () => nanoid(6).toUpperCase(),
         createPlayerId = () => nanoid(8),
+        createTeacherToken = () => nanoid(24),
+        createPlayerToken = () => nanoid(24),
     } = options;
 
     const sessions = Object.create(null);
@@ -156,7 +177,7 @@ export function createSessionManager(options = {}) {
 
     function buildStateForTeacher(session) {
         const currentQuestion = session.questions[session.currentQuestionIndex] || null;
-        const players = normalizePlayers(session.players);
+        const players = normalizePlayers(session.players).map(serializePlayer);
 
         const optionStats = currentQuestion
             ? currentQuestion.options.map((optionText, index) => {
@@ -200,7 +221,7 @@ export function createSessionManager(options = {}) {
             currentQuestionIndex: session.currentQuestionIndex,
             totalQuestions: session.questions.length,
             currentQuestion: session.status === GAME_STATUS.QUESTION ? getPublicQuestion(currentQuestion) : null,
-            player,
+            player: serializePlayer(player),
         };
     }
 
@@ -217,7 +238,7 @@ export function createSessionManager(options = {}) {
                 session.status === GAME_STATUS.QUESTION || session.status === GAME_STATUS.RESULT
                     ? getPublicQuestion(currentQuestion)
                     : null,
-            players: normalizePlayers(session.players),
+            players: normalizePlayers(session.players).map(serializePlayer),
             answeredCount: countAnswered(session.players),
             totalPlayers: Object.keys(session.players).length,
         };
@@ -229,6 +250,7 @@ export function createSessionManager(options = {}) {
 
         sessions[code] = {
             code,
+            teacherToken: createTeacherToken(),
             createdAt: timestamp,
             updatedAt: timestamp,
             expiresAt: timestamp + sessionTtlMs,
@@ -240,15 +262,29 @@ export function createSessionManager(options = {}) {
             players: Object.create(null),
         };
 
-        return createOk({ code, session: sessions[code] });
+        return createOk({ code, teacherToken: sessions[code].teacherToken, session: sessions[code] });
     }
 
-    function attachTeacher(code, socketId) {
+    function authorizeTeacher(code, teacherToken) {
         const session = getSession(code);
         if (!session) {
             return createError("SESSION_NOT_FOUND", "Session not found");
         }
 
+        if (session.teacherToken !== teacherToken) {
+            return UNAUTHORIZED_ERROR();
+        }
+
+        return createOk({ session });
+    }
+
+    function attachTeacher({ code, socketId, teacherToken }) {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
+        }
+
+        const { session } = authResult;
         session.teacherSocketId = socketId;
         touchSession(session);
         return createOk({ session });
@@ -277,8 +313,10 @@ export function createSessionManager(options = {}) {
         }
 
         const playerId = createPlayerId();
+        const playerToken = createPlayerToken();
         session.players[playerId] = {
             id: playerId,
+            playerToken,
             socketId,
             name: safePlayerName(name),
             score: 0,
@@ -292,10 +330,10 @@ export function createSessionManager(options = {}) {
         };
 
         touchSession(session);
-        return createOk({ playerId, session });
+        return createOk({ playerId, playerToken, session });
     }
 
-    function rejoinPlayer({ code, playerId, socketId }) {
+    function authorizePlayer(code, playerId, playerToken) {
         const session = getSession(code);
         if (!session) {
             return createError("SESSION_NOT_FOUND", "Session not found");
@@ -306,6 +344,20 @@ export function createSessionManager(options = {}) {
             return createError("PLAYER_NOT_FOUND", "Player not found");
         }
 
+        if (player.playerToken !== playerToken) {
+            return UNAUTHORIZED_ERROR();
+        }
+
+        return createOk({ session, player });
+    }
+
+    function rejoinPlayer({ code, playerId, playerToken, socketId }) {
+        const authResult = authorizePlayer(code, playerId, playerToken);
+        if (!authResult.ok) {
+            return authResult;
+        }
+
+        const { session, player } = authResult;
         player.socketId = socketId;
         player.connected = true;
         touchSession(session);
@@ -313,11 +365,13 @@ export function createSessionManager(options = {}) {
         return createOk({ playerId, session, playerState: buildStateForPlayer(session, playerId) });
     }
 
-    function startQuestion(code) {
-        const session = getSession(code);
-        if (!session) {
-            return createError("SESSION_NOT_FOUND", "Session not found");
+    function startQuestion({ code, teacherToken }) {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
         }
+
+        const { session } = authResult;
 
         if (isSessionFinished(session)) {
             session.status = GAME_STATUS.FINISHED;
@@ -336,19 +390,16 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function submitAnswer({ code, playerId, optionIndex }) {
-        const session = getSession(code);
-        if (!session) {
-            return createError("SESSION_NOT_FOUND", "Session not found");
+    function submitAnswer({ code, playerId, playerToken, optionIndex }) {
+        const authResult = authorizePlayer(code, playerId, playerToken);
+        if (!authResult.ok) {
+            return authResult;
         }
+
+        const { session, player } = authResult;
 
         if (session.status !== GAME_STATUS.QUESTION) {
             return createError("QUESTION_NOT_ACTIVE", "Question is not active");
-        }
-
-        const player = session.players[playerId];
-        if (!player) {
-            return createError("PLAYER_NOT_FOUND", "Player not found");
         }
 
         if (player.answeredCurrent) {
@@ -389,11 +440,13 @@ export function createSessionManager(options = {}) {
         });
     }
 
-    function showResults(code) {
-        const session = getSession(code);
-        if (!session) {
-            return createError("SESSION_NOT_FOUND", "Session not found");
+    function showResults({ code, teacherToken }) {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
         }
+
+        const { session } = authResult;
 
         if (session.status !== GAME_STATUS.QUESTION) {
             return createError("INVALID_TRANSITION", "Results can only be shown for an active question");
@@ -404,11 +457,13 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function nextQuestion(code) {
-        const session = getSession(code);
-        if (!session) {
-            return createError("SESSION_NOT_FOUND", "Session not found");
+    function nextQuestion({ code, teacherToken }) {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
         }
+
+        const { session } = authResult;
 
         if (session.status !== GAME_STATUS.RESULT) {
             return createError("INVALID_TRANSITION", "Next question can only be opened from results");
@@ -429,11 +484,13 @@ export function createSessionManager(options = {}) {
         return createOk({ finished: false, session });
     }
 
-    function resetGame(code) {
-        const session = getSession(code);
-        if (!session) {
-            return createError("SESSION_NOT_FOUND", "Session not found");
+    function resetGame({ code, teacherToken }) {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
         }
+
+        const { session } = authResult;
 
         session.status = GAME_STATUS.LOBBY;
         session.currentQuestionIndex = 0;
@@ -450,13 +507,13 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function getTeacherState(code) {
-        const session = getSession(code);
-        if (!session) {
-            return createError("SESSION_NOT_FOUND", "Session not found");
+    function getTeacherState({ code, teacherToken }) {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
         }
 
-        return createOk({ state: buildStateForTeacher(session), session });
+        return createOk({ state: buildStateForTeacher(authResult.session), session: authResult.session });
     }
 
     function markDisconnected({ code, role, playerId }) {
@@ -514,6 +571,8 @@ export function createSessionManager(options = {}) {
         createSession,
         attachTeacher,
         attachScreen,
+        authorizeTeacher,
+        authorizePlayer,
         joinPlayer,
         rejoinPlayer,
         startQuestion,

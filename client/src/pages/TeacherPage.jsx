@@ -2,15 +2,57 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
-import { getConnectionMessage, getStatusView, kz } from "../i18n/kz";
+import { getConnectionMessage, getSocketErrorMessage, getStatusView, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
+
+const TEACHER_STORAGE_KEY = "horse-quiz-teacher";
+const TEACHER_ACCESS_PIN_STORAGE_KEY = "horse-quiz-teacher-access-pin";
 
 function copyText(text) {
     navigator.clipboard.writeText(text).catch(() => { });
 }
 
+function loadTeacherSession() {
+    const rawValue = localStorage.getItem(TEACHER_STORAGE_KEY);
+    if (!rawValue) return null;
+
+    try {
+        const parsed = JSON.parse(rawValue);
+        if (parsed?.code && parsed?.teacherToken) {
+            return parsed;
+        }
+    } catch {
+        // Ignore malformed storage payloads from previous versions.
+    }
+
+    localStorage.removeItem(TEACHER_STORAGE_KEY);
+    return null;
+}
+
+function saveTeacherSession(sessionData) {
+    localStorage.setItem(TEACHER_STORAGE_KEY, JSON.stringify(sessionData));
+}
+
+function clearTeacherSession() {
+    localStorage.removeItem(TEACHER_STORAGE_KEY);
+}
+
+function loadTeacherAccessPin() {
+    return localStorage.getItem(TEACHER_ACCESS_PIN_STORAGE_KEY) || "";
+}
+
+function saveTeacherAccessPin(accessPin) {
+    localStorage.setItem(TEACHER_ACCESS_PIN_STORAGE_KEY, accessPin);
+}
+
+function clearTeacherAccessPin() {
+    localStorage.removeItem(TEACHER_ACCESS_PIN_STORAGE_KEY);
+}
+
 export default function TeacherPage() {
+    const [accessPin, setAccessPin] = useState(() => loadTeacherAccessPin());
     const [code, setCode] = useState("");
+    const [teacherToken, setTeacherToken] = useState("");
     const [session, setSession] = useState(null);
     const [created, setCreated] = useState(false);
     const [error, setError] = useState("");
@@ -22,22 +64,77 @@ export default function TeacherPage() {
             if (created || creatingSessionRef.current) return;
 
             creatingSessionRef.current = true;
-            const res = await sessionClient.createTeacherSession();
+            const storedSession = loadTeacherSession();
+            const storedAccessPin = loadTeacherAccessPin();
+            const response = storedSession
+                ? await sessionClient.joinTeacherSession(storedSession.code, storedSession.teacherToken)
+                : storedAccessPin
+                    ? await sessionClient.createTeacherSession(storedAccessPin)
+                    : null;
             creatingSessionRef.current = false;
 
-            if (res?.ok) {
-                setCode(res.code);
+            if (!response) {
+                return;
+            }
+
+            if (response?.ok) {
+                const nextCode = storedSession?.code || response.code;
+                const nextTeacherToken = storedSession?.teacherToken || response.teacherToken;
+                setCode(nextCode);
+                setTeacherToken(nextTeacherToken);
                 setCreated(true);
                 setError("");
+                saveTeacherSession({ code: nextCode, teacherToken: nextTeacherToken });
+                if (storedAccessPin) {
+                    saveTeacherAccessPin(storedAccessPin);
+                    setAccessPin(storedAccessPin);
+                }
                 return;
             }
 
-            if (res?.code === "SOCKET_CONNECT_TIMEOUT" || res?.code === "SOCKET_CONNECT_ERROR") {
+            if (response?.code === "UNAUTHORIZED" || response?.code === "SESSION_NOT_FOUND") {
+                clearTeacherSession();
+                setCode("");
+                setTeacherToken("");
+                setCreated(false);
+
+                if (storedSession && storedAccessPin) {
+                    creatingSessionRef.current = true;
+                    const recreatedSession = await sessionClient.createTeacherSession(storedAccessPin);
+                    creatingSessionRef.current = false;
+
+                    if (recreatedSession?.ok) {
+                        setCode(recreatedSession.code);
+                        setTeacherToken(recreatedSession.teacherToken);
+                        setCreated(true);
+                        setError("");
+                        saveTeacherSession({
+                            code: recreatedSession.code,
+                            teacherToken: recreatedSession.teacherToken,
+                        });
+                        return;
+                    }
+                }
+
+                if (storedSession) {
+                    ensureSession();
+                    return;
+                }
+            }
+
+            if (response?.code === "TEACHER_ACCESS_DENIED") {
+                clearTeacherAccessPin();
+                setAccessPin("");
+                setError(getSocketErrorMessage(response));
+                return;
+            }
+
+            if (response?.code === "SOCKET_CONNECT_TIMEOUT" || response?.code === "SOCKET_CONNECT_ERROR") {
                 setError("");
                 return;
             }
 
-            setError(res?.error || kz.errors.createSession);
+            setError(getSocketErrorMessage(response) || kz.errors.createSession);
         }
 
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
@@ -52,7 +149,7 @@ export default function TeacherPage() {
         const unsubscribeConnection = sessionClient.subscribeToConnection((event) => {
             setConnectionState(event.state);
 
-            if (event.type === "connect" && !created) {
+            if (event.type === "connect" && !creatingSessionRef.current) {
                 ensureSession();
             }
         });
@@ -83,9 +180,79 @@ export default function TeacherPage() {
     async function handleAction(action) {
         setError("");
         const res = await action();
+
         if (!res?.ok) {
-            setError(res?.error || kz.errors.operationFailed);
+            if (res?.code === "UNAUTHORIZED" || res?.code === "SESSION_NOT_FOUND") {
+                clearTeacherSession();
+                setCode("");
+                setTeacherToken("");
+                setCreated(false);
+                setSession(null);
+            }
+
+            setError(getSocketErrorMessage(res) || kz.errors.operationFailed);
         }
+    }
+
+    async function handleTeacherAccess() {
+        if (!accessPin.trim()) {
+            setError(kz.network.teacherAccessDenied);
+            return;
+        }
+
+        setError("");
+        creatingSessionRef.current = true;
+        const res = await sessionClient.createTeacherSession(accessPin.trim());
+        creatingSessionRef.current = false;
+
+        if (!res?.ok) {
+            if (res?.code === "TEACHER_ACCESS_DENIED") {
+                clearTeacherAccessPin();
+            }
+
+            setError(getSocketErrorMessage(res) || kz.errors.createSession);
+            return;
+        }
+
+        saveTeacherAccessPin(accessPin.trim());
+        saveTeacherSession({
+            code: res.code,
+            teacherToken: res.teacherToken,
+        });
+        setCode(res.code);
+        setTeacherToken(res.teacherToken);
+        setCreated(true);
+        setError("");
+    }
+
+    if (!created) {
+        return (
+            <div className="center-shell">
+                <div className="center-card">
+                    <div className="badge badge-purple">{kz.teacher.kicker}</div>
+                    <h1 className="center-title mt-16">{kz.teacher.accessTitle}</h1>
+                    <p className="center-subtitle">{kz.teacher.accessSubtitle}</p>
+
+                    <input
+                        className="input"
+                        placeholder={kz.teacher.accessPlaceholder}
+                        value={accessPin}
+                        onChange={(event) => setAccessPin(event.target.value)}
+                        maxLength={32}
+                    />
+
+                    <div className="button-row mt-16">
+                        <button className="btn btn-primary" onClick={handleTeacherAccess}>
+                            {kz.buttons.authorizeTeacher}
+                        </button>
+                    </div>
+
+                    {connectionMessage ? <div className="helper mt-16">{connectionMessage}</div> : null}
+                    {error ? <div className="inline-error mt-16">{error}</div> : null}
+                    <div className="mt-20 helper">{kz.teacher.accessHint}</div>
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -202,7 +369,7 @@ export default function TeacherPage() {
                         <div className="button-row">
                             <button
                                 className="btn btn-success"
-                                onClick={() => handleAction(() => sessionClient.startQuestion(code))}
+                                onClick={() => handleAction(() => sessionClient.startQuestion(code, teacherToken))}
                                 disabled={!session?.canStart}
                             >
                                 {kz.buttons.startQuestion}
@@ -210,7 +377,7 @@ export default function TeacherPage() {
 
                             <button
                                 className="btn btn-warning"
-                                onClick={() => handleAction(() => sessionClient.showResults(code))}
+                                onClick={() => handleAction(() => sessionClient.showResults(code, teacherToken))}
                                 disabled={!session?.canShowResults}
                             >
                                 {kz.buttons.showResults}
@@ -218,7 +385,7 @@ export default function TeacherPage() {
 
                             <button
                                 className="btn btn-primary"
-                                onClick={() => handleAction(() => sessionClient.nextQuestion(code))}
+                                onClick={() => handleAction(() => sessionClient.nextQuestion(code, teacherToken))}
                                 disabled={!session?.canGoNext}
                             >
                                 {kz.buttons.nextQuestion}
@@ -226,7 +393,7 @@ export default function TeacherPage() {
 
                             <button
                                 className="btn btn-danger"
-                                onClick={() => handleAction(() => sessionClient.resetGame(code))}
+                                onClick={() => handleAction(() => sessionClient.resetGame(code, teacherToken))}
                                 disabled={!session?.canReset}
                             >
                                 {kz.buttons.resetGame}

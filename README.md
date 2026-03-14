@@ -10,6 +10,7 @@
 - вопросы хранятся напрямую в [`questions.json`](/Users/kozi/Documents/kahoot-horses/questions.json)
 - поддерживаются длинные тексты для оқу сауаттылығы
 - поддерживаются изображения в самих вопросах и в вариантах ответа
+- `teacher` защищён PIN-кодом доступа
 
 ## Стек
 - `client`: React + Vite + Socket.IO client
@@ -96,10 +97,11 @@ VITE_SERVER_URL=http://localhost:4000 npm run dev
 - `MAX_PLAYERS_PER_SESSION` - лимит игроков в сессии, по умолчанию `50`
 - `SESSION_TTL_MS` - TTL сессии в миллисекундах, по умолчанию `14400000`
 - `SESSION_CLEANUP_INTERVAL_MS` - интервал cleanup в миллисекундах, по умолчанию `300000`
+- `TEACHER_ACCESS_PIN` - PIN для доступа на страницу учителя; если не задан, сервер сгенерирует PIN и выведет его в терминал
 
 Пример:
 ```bash
-PORT=4000 CLIENT_ORIGINS=http://localhost:5173 npm start
+PORT=4000 CLIENT_ORIGINS=http://localhost:5173 TEACHER_ACCESS_PIN=246810 npm start
 ```
 
 ## Проверки

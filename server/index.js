@@ -86,18 +86,40 @@ export function createAppServer(options = {}) {
         Object.assign(socket.data, roleData);
     }
 
+    function validateTeacherAccessPin(accessPin) {
+        if (config.teacherAccessPin && accessPin === config.teacherAccessPin) {
+            return { ok: true };
+        }
+
+        return {
+            ok: false,
+            code: "TEACHER_ACCESS_DENIED",
+            error: "Teacher access denied",
+        };
+    }
+
     io.on("connection", (socket) => {
         console.log(`Socket connected: ${socket.id}`);
 
-        socket.on("teacher:createSession", (_, callback) => {
+        socket.on("teacher:createSession", ({ accessPin } = {}, callback) => {
             try {
+                const accessResult = validateTeacherAccessPin(accessPin);
+                if (!accessResult.ok) {
+                    callback?.(accessResult);
+                    return;
+                }
+
                 const result = sessionManager.createSession();
                 if (!result.ok) {
                     callback?.(result);
                     return;
                 }
 
-                const attachResult = sessionManager.attachTeacher(result.code, socket.id);
+                const attachResult = sessionManager.attachTeacher({
+                    code: result.code,
+                    socketId: socket.id,
+                    teacherToken: result.teacherToken,
+                });
                 if (!attachResult.ok) {
                     callback?.(attachResult);
                     return;
@@ -105,7 +127,7 @@ export function createAppServer(options = {}) {
 
                 bindRole(socket, { role: "teacher", code: result.code });
                 socket.join(`teacher:${result.code}`);
-                callback?.({ ok: true, code: result.code });
+                callback?.({ ok: true, code: result.code, teacherToken: result.teacherToken });
                 emitAllState(result.code);
             } catch (error) {
                 console.error("teacher:createSession error:", error);
@@ -117,9 +139,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("teacher:joinSession", ({ code }, callback) => {
+        socket.on("teacher:joinSession", ({ code, teacherToken }, callback) => {
             try {
-                const result = sessionManager.attachTeacher(code, socket.id);
+                const result = sessionManager.attachTeacher({ code, socketId: socket.id, teacherToken });
                 if (!result.ok) {
                     callback?.(result);
                     return;
@@ -170,7 +192,7 @@ export function createAppServer(options = {}) {
                 }
 
                 bindRole(socket, { role: "player", code, playerId: result.playerId });
-                callback?.({ ok: true, playerId: result.playerId });
+                callback?.({ ok: true, playerId: result.playerId, playerToken: result.playerToken });
                 emitAllState(code);
             } catch (error) {
                 console.error("player:join error:", error);
@@ -182,9 +204,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("player:rejoin", ({ code, playerId }, callback) => {
+        socket.on("player:rejoin", ({ code, playerId, playerToken }, callback) => {
             try {
-                const result = sessionManager.rejoinPlayer({ code, playerId, socketId: socket.id });
+                const result = sessionManager.rejoinPlayer({ code, playerId, playerToken, socketId: socket.id });
                 if (!result.ok) {
                     callback?.(result);
                     return;
@@ -207,9 +229,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("teacher:startQuestion", ({ code }, callback) => {
+        socket.on("teacher:startQuestion", ({ code, teacherToken }, callback) => {
             try {
-                const result = sessionManager.startQuestion(code);
+                const result = sessionManager.startQuestion({ code, teacherToken });
                 callback?.(result.ok ? { ok: true } : result);
                 if (result.ok || result.code === "GAME_ALREADY_FINISHED") {
                     emitAllState(code);
@@ -224,9 +246,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("player:submitAnswer", ({ code, playerId, optionIndex }, callback) => {
+        socket.on("player:submitAnswer", ({ code, playerId, playerToken, optionIndex }, callback) => {
             try {
-                const result = sessionManager.submitAnswer({ code, playerId, optionIndex });
+                const result = sessionManager.submitAnswer({ code, playerId, playerToken, optionIndex });
                 callback?.(result);
                 if (result.ok) {
                     emitAllState(code);
@@ -241,9 +263,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("teacher:showResults", ({ code }, callback) => {
+        socket.on("teacher:showResults", ({ code, teacherToken }, callback) => {
             try {
-                const result = sessionManager.showResults(code);
+                const result = sessionManager.showResults({ code, teacherToken });
                 callback?.(result.ok ? { ok: true } : result);
                 if (result.ok) {
                     emitAllState(code);
@@ -258,9 +280,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("teacher:nextQuestion", ({ code }, callback) => {
+        socket.on("teacher:nextQuestion", ({ code, teacherToken }, callback) => {
             try {
-                const result = sessionManager.nextQuestion(code);
+                const result = sessionManager.nextQuestion({ code, teacherToken });
                 callback?.(result.ok ? { ok: true, finished: result.finished } : result);
                 if (result.ok) {
                     emitAllState(code);
@@ -275,9 +297,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("teacher:resetGame", ({ code }, callback) => {
+        socket.on("teacher:resetGame", ({ code, teacherToken }, callback) => {
             try {
-                const result = sessionManager.resetGame(code);
+                const result = sessionManager.resetGame({ code, teacherToken });
                 callback?.(result.ok ? { ok: true } : result);
                 if (result.ok) {
                     emitAllState(code);
@@ -292,9 +314,9 @@ export function createAppServer(options = {}) {
             }
         });
 
-        socket.on("session:getState", ({ code }, callback) => {
+        socket.on("session:getState", ({ code, teacherToken }, callback) => {
             try {
-                const result = sessionManager.getTeacherState(code);
+                const result = sessionManager.getTeacherState({ code, teacherToken });
                 callback?.(result);
             } catch (error) {
                 console.error("session:getState error:", error);
@@ -359,5 +381,8 @@ if (process.argv[1] && entryPath === process.argv[1]) {
     const runtime = createAppServer();
     runtime.server.listen(runtime.config.port, "0.0.0.0", () => {
         console.log(`Server running on http://0.0.0.0:${runtime.config.port}`);
+        if (runtime.config.teacherAccessPinIsGenerated) {
+            console.log(`Teacher access PIN: ${runtime.config.teacherAccessPin}`);
+        }
     });
 }

@@ -45,6 +45,8 @@ test("socket flow covers teacher, players, results, and finish", async () => {
             maxPlayersPerSession: 50,
             sessionTtlMs: 1000 * 60 * 60,
             cleanupIntervalMs: 1000 * 60 * 60,
+            teacherAccessPin: "test-pin",
+            teacherAccessPinIsGenerated: false,
         },
     });
 
@@ -66,21 +68,35 @@ test("socket flow covers teacher, players, results, and finish", async () => {
             once(playerTwo, "connect"),
         ]);
 
-        const teacherCreated = await emitAck(teacher, "teacher:createSession", {});
+        const deniedTeacher = await emitAck(teacher, "teacher:createSession", { accessPin: "bad-pin" });
+        assert.equal(deniedTeacher.ok, false);
+        assert.equal(deniedTeacher.code, "TEACHER_ACCESS_DENIED");
+
+        const teacherCreated = await emitAck(teacher, "teacher:createSession", { accessPin: "test-pin" });
         assert.equal(teacherCreated.ok, true);
 
         const code = teacherCreated.code;
+        const teacherToken = teacherCreated.teacherToken;
         const teacherStatePromise = waitForState(teacher, (state) => state.totalPlayers >= 1);
         const joinedOne = await emitAck(playerOne, "player:join", { code, name: "Aru" });
         const joinedTwo = await emitAck(playerTwo, "player:join", { code, name: "Dana" });
 
         assert.equal(joinedOne.ok, true);
         assert.equal(joinedTwo.ok, true);
+        assert.ok(joinedOne.playerToken);
+        assert.ok(joinedTwo.playerToken);
 
         const teacherState = await teacherStatePromise;
         assert.equal(teacherState.totalPlayers, 1);
 
-        const startQuestion = await emitAck(teacher, "teacher:startQuestion", { code });
+        const unauthorizedTeacher = await emitAck(teacher, "teacher:startQuestion", {
+            code,
+            teacherToken: "bad-token",
+        });
+        assert.equal(unauthorizedTeacher.ok, false);
+        assert.equal(unauthorizedTeacher.code, "UNAUTHORIZED");
+
+        const startQuestion = await emitAck(teacher, "teacher:startQuestion", { code, teacherToken });
         assert.equal(startQuestion.ok, true);
 
         const [playerOneQuestion] = await Promise.all([
@@ -92,21 +108,32 @@ test("socket flow covers teacher, players, results, and finish", async () => {
         const submitOne = await emitAck(playerOne, "player:submitAnswer", {
             code,
             playerId: joinedOne.playerId,
+            playerToken: joinedOne.playerToken,
             optionIndex: 0,
         });
         const submitTwo = await emitAck(playerTwo, "player:submitAnswer", {
             code,
             playerId: joinedTwo.playerId,
+            playerToken: joinedTwo.playerToken,
             optionIndex: 0,
         });
 
         assert.equal(submitOne.ok, true);
         assert.equal(submitTwo.ok, true);
 
-        const showResults = await emitAck(teacher, "teacher:showResults", { code });
+        const unauthorizedPlayer = await emitAck(playerOne, "player:submitAnswer", {
+            code,
+            playerId: joinedOne.playerId,
+            playerToken: "bad-token",
+            optionIndex: 0,
+        });
+        assert.equal(unauthorizedPlayer.ok, false);
+        assert.equal(unauthorizedPlayer.code, "UNAUTHORIZED");
+
+        const showResults = await emitAck(teacher, "teacher:showResults", { code, teacherToken });
         assert.equal(showResults.ok, true);
 
-        const nextQuestion = await emitAck(teacher, "teacher:nextQuestion", { code });
+        const nextQuestion = await emitAck(teacher, "teacher:nextQuestion", { code, teacherToken });
         assert.equal(nextQuestion.ok, true);
         assert.equal(nextQuestion.finished, false);
     } finally {

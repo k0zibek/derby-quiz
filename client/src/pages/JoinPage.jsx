@@ -17,6 +17,25 @@ function storageKey(code) {
     return `horse-quiz-player:${code}`;
 }
 
+function loadPlayerSession(code) {
+    const rawValue = localStorage.getItem(storageKey(code));
+    if (!rawValue) return null;
+
+    try {
+        const parsed = JSON.parse(rawValue);
+        if (parsed?.playerId && parsed?.playerToken) {
+            return parsed;
+        }
+    } catch {
+        if (rawValue) {
+            // Old storage format only had playerId, which is no longer sufficient.
+        }
+    }
+
+    localStorage.removeItem(storageKey(code));
+    return null;
+}
+
 export default function JoinPage() {
     const { code } = useParams();
     const [name, setName] = useState("");
@@ -32,8 +51,8 @@ export default function JoinPage() {
 
     useEffect(() => {
         async function restorePlayer() {
-            const savedPlayerId = localStorage.getItem(storageKey(code));
-            if (!savedPlayerId || joined || restoreInFlightRef.current) {
+            const savedPlayerSession = loadPlayerSession(code);
+            if (!savedPlayerSession || joined || restoreInFlightRef.current) {
                 setIsRejoining(false);
                 return;
             }
@@ -41,19 +60,27 @@ export default function JoinPage() {
             restoreInFlightRef.current = true;
             setIsRejoining(true);
 
-            const res = await sessionClient.rejoinPlayer(code, savedPlayerId);
+            const res = await sessionClient.rejoinPlayer(
+                code,
+                savedPlayerSession.playerId,
+                savedPlayerSession.playerToken
+            );
             restoreInFlightRef.current = false;
 
             if (res?.ok) {
                 setJoined(true);
-                setPlayerId(savedPlayerId);
+                setPlayerId(savedPlayerSession.playerId);
                 setSession(res.state || null);
                 setSessionError("");
                 setIsRejoining(false);
                 return;
             }
 
-            if (res?.code === "SESSION_NOT_FOUND" || res?.code === "PLAYER_NOT_FOUND") {
+            if (
+                res?.code === "SESSION_NOT_FOUND" ||
+                res?.code === "PLAYER_NOT_FOUND" ||
+                res?.code === "UNAUTHORIZED"
+            ) {
                 localStorage.removeItem(storageKey(code));
                 if (res?.code === "SESSION_NOT_FOUND") {
                     setSessionError(kz.errors.sessionNotFound);
@@ -136,7 +163,13 @@ export default function JoinPage() {
             return;
         }
 
-        localStorage.setItem(storageKey(code), res.playerId);
+        localStorage.setItem(
+            storageKey(code),
+            JSON.stringify({
+                playerId: res.playerId,
+                playerToken: res.playerToken,
+            })
+        );
         setPlayerId(res.playerId);
         setJoined(true);
     }
@@ -144,8 +177,32 @@ export default function JoinPage() {
     async function submitAnswer(optionIndex) {
         if (!playerId || alreadyAnswered) return;
 
-        const res = await sessionClient.submitAnswer(code, playerId, optionIndex);
+        const savedPlayerSession = loadPlayerSession(code);
+        if (!savedPlayerSession) {
+            setJoined(false);
+            setPlayerId("");
+            setSession(null);
+            setSessionError(kz.network.unauthorized);
+            return;
+        }
+
+        const res = await sessionClient.submitAnswer(
+            code,
+            playerId,
+            savedPlayerSession.playerToken,
+            optionIndex
+        );
         if (!res?.ok) {
+            if (
+                res?.code === "UNAUTHORIZED" ||
+                res?.code === "PLAYER_NOT_FOUND" ||
+                res?.code === "SESSION_NOT_FOUND"
+            ) {
+                localStorage.removeItem(storageKey(code));
+                setJoined(false);
+                setPlayerId("");
+                setSession(null);
+            }
             setSessionError(getSocketErrorMessage(res));
             return;
         }
