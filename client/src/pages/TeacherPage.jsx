@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
-import { socket } from "../socket";
+import { sessionClient } from "../sessionClient";
 
 function getStatusLabel(status) {
     switch (status) {
@@ -23,26 +23,31 @@ export default function TeacherPage() {
     const [code, setCode] = useState("");
     const [session, setSession] = useState(null);
     const [created, setCreated] = useState(false);
+    const [error, setError] = useState("");
 
     useEffect(() => {
-        const handleState = (state) => setSession(state);
+        const unsubscribe = sessionClient.subscribeToSessionState((state) => {
+            setSession(state);
+            if (state?.code) {
+                setCode(state.code);
+            }
+        });
 
-        socket.on("session:state", handleState);
+        async function ensureSession() {
+            if (created) return;
 
-        if (!created) {
-            socket.emit("teacher:createSession", {}, (res) => {
-                if (res?.ok) {
-                    setCode(res.code);
-                    setCreated(true);
-                } else {
-                    alert(res?.error || "Не удалось создать сессию");
-                }
-            });
+            const res = await sessionClient.createTeacherSession();
+            if (res?.ok) {
+                setCode(res.code);
+                setCreated(true);
+                setError("");
+            } else {
+                setError(res?.error || "Не удалось создать сессию");
+            }
         }
 
-        return () => {
-            socket.off("session:state", handleState);
-        };
+        ensureSession();
+        return unsubscribe;
     }, [created]);
 
     const joinUrl = useMemo(() => {
@@ -55,35 +60,17 @@ export default function TeacherPage() {
         return `${window.location.origin}/screen/${code}`;
     }, [code]);
 
-    const players = session?.players || [];
     const statusView = getStatusLabel(session?.status);
-
-    const handleStartQuestion = () => {
-        socket.emit("teacher:startQuestion", { code }, (res) => {
-            if (!res?.ok) alert(res?.error || "Не удалось запустить вопрос");
-        });
-    };
-
-    const handleShowResults = () => {
-        socket.emit("teacher:showResults", { code }, (res) => {
-            if (!res?.ok) alert(res?.error || "Не удалось показать результаты");
-        });
-    };
-
-    const handleNextQuestion = () => {
-        socket.emit("teacher:nextQuestion", { code }, (res) => {
-            if (!res?.ok) alert(res?.error || "Не удалось перейти к следующему вопросу");
-        });
-    };
-
-    const handleReset = () => {
-        socket.emit("teacher:resetGame", { code }, (res) => {
-            if (!res?.ok) alert(res?.error || "Не удалось сбросить игру");
-        });
-    };
-
     const currentQuestionNumber = (session?.currentQuestionIndex ?? 0) + 1;
     const totalQuestions = session?.totalQuestions ?? 0;
+
+    async function handleAction(action) {
+        setError("");
+        const res = await action();
+        if (!res?.ok) {
+            setError(res?.error || "Операция не выполнена");
+        }
+    }
 
     return (
         <div className="page-shell">
@@ -129,6 +116,8 @@ export default function TeacherPage() {
                             </div>
                         </div>
                     </div>
+
+                    {error ? <div className="inline-error mt-16">{error}</div> : null}
                 </section>
 
                 <div className="grid grid-2">
@@ -151,7 +140,11 @@ export default function TeacherPage() {
                             <div className="helper">Ссылка для входа учеников</div>
                             <div className="link-box mt-12">{joinUrl || "Создается..."}</div>
                             <div className="inline-actions">
-                                <button className="btn btn-neutral" onClick={() => copyText(joinUrl)}>
+                                <button
+                                    className="btn btn-neutral"
+                                    onClick={() => copyText(joinUrl)}
+                                    disabled={!joinUrl}
+                                >
                                     Скопировать ссылку
                                 </button>
                             </div>
@@ -161,14 +154,22 @@ export default function TeacherPage() {
                             <div className="helper">Ссылка для большого экрана гонки</div>
                             <div className="link-box mt-12">{screenUrl || "Создается..."}</div>
                             <div className="inline-actions">
-                                <button className="btn btn-neutral" onClick={() => copyText(screenUrl)}>
+                                <button
+                                    className="btn btn-neutral"
+                                    onClick={() => copyText(screenUrl)}
+                                    disabled={!screenUrl}
+                                >
                                     Скопировать экран
                                 </button>
                                 <a
-                                    href={screenUrl}
+                                    href={screenUrl || "#"}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="btn btn-primary"
+                                    className={`btn btn-primary ${screenUrl ? "" : "btn-disabled-link"}`}
+                                    aria-disabled={!screenUrl}
+                                    onClick={(event) => {
+                                        if (!screenUrl) event.preventDefault();
+                                    }}
                                 >
                                     Открыть экран гонки
                                 </a>
@@ -188,19 +189,35 @@ export default function TeacherPage() {
                         </div>
 
                         <div className="button-row">
-                            <button className="btn btn-success" onClick={handleStartQuestion}>
+                            <button
+                                className="btn btn-success"
+                                onClick={() => handleAction(() => sessionClient.startQuestion(code))}
+                                disabled={!session?.canStart}
+                            >
                                 Запустить вопрос
                             </button>
 
-                            <button className="btn btn-warning" onClick={handleShowResults}>
+                            <button
+                                className="btn btn-warning"
+                                onClick={() => handleAction(() => sessionClient.showResults(code))}
+                                disabled={!session?.canShowResults}
+                            >
                                 Показать результаты
                             </button>
 
-                            <button className="btn btn-primary" onClick={handleNextQuestion}>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => handleAction(() => sessionClient.nextQuestion(code))}
+                                disabled={!session?.canGoNext}
+                            >
                                 Следующий вопрос
                             </button>
 
-                            <button className="btn btn-danger" onClick={handleReset}>
+                            <button
+                                className="btn btn-danger"
+                                onClick={() => handleAction(() => sessionClient.resetGame(code))}
+                                disabled={!session?.canReset}
+                            >
                                 Сбросить игру
                             </button>
                         </div>
@@ -237,8 +254,8 @@ export default function TeacherPage() {
                                                                 className="progress-fill"
                                                                 style={{
                                                                     width: `${session?.totalPlayers
-                                                                            ? ((stat?.count ?? 0) / session.totalPlayers) * 100
-                                                                            : 0
+                                                                        ? ((stat?.count ?? 0) / session.totalPlayers) * 100
+                                                                        : 0
                                                                         }%`,
                                                                     background: stat?.isCorrect ? "#16a34a" : "#94a3b8",
                                                                 }}
@@ -258,69 +275,6 @@ export default function TeacherPage() {
                         </div>
                     </section>
                 </div>
-
-                <section className="card mt-24">
-                    <div className="section-header">
-                        <div>
-                            <h2 className="card-title">Игроки</h2>
-                            <p className="card-subtitle">
-                                Список обновляется автоматически. Серый статус — игрок отключился.
-                            </p>
-                        </div>
-                        <div className="badge badge-purple">
-                            Всего: {players.length} / 50
-                        </div>
-                    </div>
-
-                    {players.length === 0 ? (
-                        <div className="empty-state">
-                            Пока никого нет. Пусть ученики отсканируют QR-код и войдут в игру.
-                        </div>
-                    ) : (
-                        <div className="player-list">
-                            {players.map((player, index) => (
-                                <div
-                                    key={player.id}
-                                    className="player-card"
-                                    style={{
-                                        opacity: player.connected ? 1 : 0.72,
-                                    }}
-                                >
-                                    <div className="player-row">
-                                        <div className="player-left">
-                                            <div className="player-rank">{index + 1}</div>
-                                            <div
-                                                className="player-dot"
-                                                style={{ background: player.color }}
-                                            />
-                                            <div>
-                                                <div className="player-name">{player.name}</div>
-                                                <div className="player-meta">
-                                                    {player.connected ? "в сети" : "отключен"} ·{" "}
-                                                    {player.answeredCurrent ? "ответил" : "ждет"}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="badge badge-light">
-                                            {player.score} очков
-                                        </div>
-                                    </div>
-
-                                    <div className="progress-track">
-                                        <div
-                                            className="progress-fill"
-                                            style={{
-                                                width: `${player.progress}%`,
-                                                background: player.color,
-                                            }}
-                                        />
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </section>
             </div>
         </div>
     );

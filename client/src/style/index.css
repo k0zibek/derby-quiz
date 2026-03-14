@@ -221,6 +221,11 @@ button {
   transform: none;
 }
 
+.btn-disabled-link {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .btn-primary {
   background: var(--primary);
   color: white;
@@ -317,6 +322,16 @@ button {
 .helper {
   font-size: 14px;
   color: var(--muted);
+}
+
+.inline-error {
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(254, 226, 226, 0.92);
+  color: #991b1b;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .qr-shell {

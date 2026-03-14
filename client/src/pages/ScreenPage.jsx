@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { socket } from "../socket";
+import { sessionClient } from "../sessionClient";
 
 function getStatusText(status) {
     switch (status) {
@@ -58,17 +58,15 @@ function PodiumCard({ player, rank, emoji, ringColor }) {
     );
 }
 
-function Lane({ player, index }) {
-    const left = Math.max(5, Math.min(92, 5 + player.progress * 0.87));
-
+function Lane({ lane }) {
     return (
         <div className="lane">
-            <div className="horse-runner" style={{ left: `${left}%` }}>
+            <div className="horse-runner" style={{ left: `${lane.left}%` }}>
                 <div
                     className="horse-avatar"
                     style={{
-                        background: `${player.color}22`,
-                        borderColor: player.color,
+                        background: `${lane.player.color}22`,
+                        borderColor: lane.player.color,
                     }}
                 >
                     🐎
@@ -76,10 +74,10 @@ function Lane({ player, index }) {
 
                 <div className="horse-label">
                     <div className="horse-name">
-                        #{index + 1} {player.name}
+                        #{lane.rank} {lane.player.name}
                     </div>
                     <div className="horse-meta">
-                        {player.score} очков · прогресс {player.progress}%
+                        {lane.player.score} очков · прогресс {lane.player.progress}%
                     </div>
                 </div>
             </div>
@@ -90,25 +88,34 @@ function Lane({ player, index }) {
 export default function ScreenPage() {
     const { code } = useParams();
     const [session, setSession] = useState(null);
+    const [error, setError] = useState("");
 
     useEffect(() => {
-        const handleState = (state) => setSession(state);
-
-        socket.on("session:state", handleState);
-
-        socket.emit("screen:join", { code }, (res) => {
-            if (!res?.ok) {
-                alert(res?.error || "Не удалось подключить экран");
-            }
+        const unsubscribe = sessionClient.subscribeToSessionState((state) => {
+            setSession(state);
+            setError("");
         });
 
-        return () => {
-            socket.off("session:state", handleState);
-        };
+        async function connectScreen() {
+            const res = await sessionClient.joinScreen(code);
+            if (!res?.ok) {
+                setError(res?.error || "Не удалось подключить экран");
+            }
+        }
+
+        connectScreen();
+        return unsubscribe;
     }, [code]);
 
     const players = useMemo(() => session?.players || [], [session?.players]);
     const topThree = players.slice(0, 3);
+    const lanes = useMemo(() => {
+        return players.map((player, index) => ({
+            player,
+            rank: index + 1,
+            left: Math.max(5, Math.min(92, 5 + player.progress * 0.87)),
+        }));
+    }, [players]);
 
     return (
         <div className="race-page">
@@ -140,6 +147,8 @@ export default function ScreenPage() {
                         </div>
                     </div>
                 </section>
+
+                {error ? <div className="inline-error mt-16">{error}</div> : null}
 
                 {session?.status === "finished" && (
                     <section className="card mt-20">
@@ -177,13 +186,13 @@ export default function ScreenPage() {
                     <div className="track-inner">
                         <div className="finish-line" />
 
-                        {players.length === 0 ? (
+                        {lanes.length === 0 ? (
                             <div className="empty-state" style={{ margin: 12 }}>
                                 Игроки еще не подключились. Покажите QR-код ученикам.
                             </div>
                         ) : (
-                            players.map((player, index) => (
-                                <Lane key={player.id} player={player} index={index} />
+                            lanes.map((lane) => (
+                                <Lane key={lane.player.id} lane={lane} />
                             ))
                         )}
                     </div>
