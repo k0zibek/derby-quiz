@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
 import { getConnectionMessage, getSocketErrorMessage, getStatusView, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
+import { clearPlayerSession, loadPlayerSession, savePlayerSession } from "../sessionStorage";
 
 const OPTION_COLORS = [
     { bg: "#eff6ff", border: "#bfdbfe" },
@@ -12,29 +13,6 @@ const OPTION_COLORS = [
     { bg: "#faf5ff", border: "#e9d5ff" },
     { bg: "#fef2f2", border: "#fecaca" },
 ];
-
-function storageKey(code) {
-    return `horse-quiz-player:${code}`;
-}
-
-function loadPlayerSession(code) {
-    const rawValue = localStorage.getItem(storageKey(code));
-    if (!rawValue) return null;
-
-    try {
-        const parsed = JSON.parse(rawValue);
-        if (parsed?.playerId && parsed?.playerToken) {
-            return parsed;
-        }
-    } catch {
-        if (rawValue) {
-            // Old storage format only had playerId, which is no longer sufficient.
-        }
-    }
-
-    localStorage.removeItem(storageKey(code));
-    return null;
-}
 
 export default function JoinPage() {
     const { code } = useParams();
@@ -81,7 +59,7 @@ export default function JoinPage() {
                 res?.code === "PLAYER_NOT_FOUND" ||
                 res?.code === "UNAUTHORIZED"
             ) {
-                localStorage.removeItem(storageKey(code));
+                clearPlayerSession(code);
                 if (res?.code === "SESSION_NOT_FOUND") {
                     setSessionError(kz.errors.sessionNotFound);
                 }
@@ -163,13 +141,10 @@ export default function JoinPage() {
             return;
         }
 
-        localStorage.setItem(
-            storageKey(code),
-            JSON.stringify({
-                playerId: res.playerId,
-                playerToken: res.playerToken,
-            })
-        );
+        savePlayerSession(code, {
+            playerId: res.playerId,
+            playerToken: res.playerToken,
+        });
         setPlayerId(res.playerId);
         setJoined(true);
     }
@@ -198,7 +173,7 @@ export default function JoinPage() {
                 res?.code === "PLAYER_NOT_FOUND" ||
                 res?.code === "SESSION_NOT_FOUND"
             ) {
-                localStorage.removeItem(storageKey(code));
+                clearPlayerSession(code);
                 setJoined(false);
                 setPlayerId("");
                 setSession(null);

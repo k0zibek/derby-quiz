@@ -19,8 +19,15 @@ function ensureConnected(timeoutMs = CONNECT_TIMEOUT_MS) {
     }
 
     return new Promise((resolve) => {
+        let lastConnectError = "";
+
         const timeoutId = globalThis.setTimeout(() => {
             cleanup();
+            if (lastConnectError) {
+                resolve(createError("SOCKET_CONNECT_ERROR", lastConnectError));
+                return;
+            }
+
             resolve(createError("SOCKET_CONNECT_TIMEOUT", "Timed out while connecting to the game server"));
         }, timeoutMs);
 
@@ -36,8 +43,7 @@ function ensureConnected(timeoutMs = CONNECT_TIMEOUT_MS) {
         }
 
         function handleConnectError(error) {
-            cleanup();
-            resolve(createError("SOCKET_CONNECT_ERROR", error?.message || "Failed to connect to the game server"));
+            lastConnectError = error?.message || "Failed to connect to the game server";
         }
 
         socket.on("connect", handleConnect);

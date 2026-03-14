@@ -4,91 +4,49 @@ import { QRCodeCanvas } from "qrcode.react";
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
 import { getConnectionMessage, getSocketErrorMessage, getStatusView, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
-
-const TEACHER_STORAGE_KEY = "horse-quiz-teacher";
-const TEACHER_ACCESS_PIN_STORAGE_KEY = "horse-quiz-teacher-access-pin";
+import { clearTeacherSession, loadTeacherSession, saveTeacherSession } from "../sessionStorage";
 
 function copyText(text) {
     navigator.clipboard.writeText(text).catch(() => { });
 }
 
-function loadTeacherSession() {
-    const rawValue = localStorage.getItem(TEACHER_STORAGE_KEY);
-    if (!rawValue) return null;
-
-    try {
-        const parsed = JSON.parse(rawValue);
-        if (parsed?.code && parsed?.teacherToken) {
-            return parsed;
-        }
-    } catch {
-        // Ignore malformed storage payloads from previous versions.
-    }
-
-    localStorage.removeItem(TEACHER_STORAGE_KEY);
-    return null;
-}
-
-function saveTeacherSession(sessionData) {
-    localStorage.setItem(TEACHER_STORAGE_KEY, JSON.stringify(sessionData));
-}
-
-function clearTeacherSession() {
-    localStorage.removeItem(TEACHER_STORAGE_KEY);
-}
-
-function loadTeacherAccessPin() {
-    return localStorage.getItem(TEACHER_ACCESS_PIN_STORAGE_KEY) || "";
-}
-
-function saveTeacherAccessPin(accessPin) {
-    localStorage.setItem(TEACHER_ACCESS_PIN_STORAGE_KEY, accessPin);
-}
-
-function clearTeacherAccessPin() {
-    localStorage.removeItem(TEACHER_ACCESS_PIN_STORAGE_KEY);
-}
-
 export default function TeacherPage() {
-    const [accessPin, setAccessPin] = useState(() => loadTeacherAccessPin());
+    const [accessPin, setAccessPin] = useState("");
     const [code, setCode] = useState("");
     const [teacherToken, setTeacherToken] = useState("");
     const [session, setSession] = useState(null);
-    const [created, setCreated] = useState(false);
+    const [isRestoring, setIsRestoring] = useState(() => Boolean(loadTeacherSession()));
     const [error, setError] = useState("");
     const [connectionState, setConnectionState] = useState(sessionClient.getConnectionState());
-    const creatingSessionRef = useRef(false);
+    const restoreInFlightRef = useRef(false);
 
     useEffect(() => {
-        async function ensureSession() {
-            if (created || creatingSessionRef.current) return;
+        let isMounted = true;
 
-            creatingSessionRef.current = true;
+        async function restoreSession() {
             const storedSession = loadTeacherSession();
-            const storedAccessPin = loadTeacherAccessPin();
-            const response = storedSession
-                ? await sessionClient.joinTeacherSession(storedSession.code, storedSession.teacherToken)
-                : storedAccessPin
-                    ? await sessionClient.createTeacherSession(storedAccessPin)
-                    : null;
-            creatingSessionRef.current = false;
-
-            if (!response) {
+            if (!storedSession || restoreInFlightRef.current) {
+                if (isMounted) {
+                    setIsRestoring(false);
+                }
                 return;
             }
 
+            restoreInFlightRef.current = true;
+            if (isMounted) {
+                setIsRestoring(true);
+            }
+
+            const response = await sessionClient.joinTeacherSession(storedSession.code, storedSession.teacherToken);
+            restoreInFlightRef.current = false;
+
+            if (!isMounted) return;
+
             if (response?.ok) {
-                const nextCode = storedSession?.code || response.code;
-                const nextTeacherToken = storedSession?.teacherToken || response.teacherToken;
-                setCode(nextCode);
-                setTeacherToken(nextTeacherToken);
-                setCreated(true);
+                setCode(storedSession.code);
+                setTeacherToken(storedSession.teacherToken);
                 setError("");
-                saveTeacherSession({ code: nextCode, teacherToken: nextTeacherToken });
-                if (storedAccessPin) {
-                    saveTeacherAccessPin(storedAccessPin);
-                    setAccessPin(storedAccessPin);
-                }
+                setIsRestoring(false);
                 return;
             }
 
@@ -96,52 +54,27 @@ export default function TeacherPage() {
                 clearTeacherSession();
                 setCode("");
                 setTeacherToken("");
-                setCreated(false);
-
-                if (storedSession && storedAccessPin) {
-                    creatingSessionRef.current = true;
-                    const recreatedSession = await sessionClient.createTeacherSession(storedAccessPin);
-                    creatingSessionRef.current = false;
-
-                    if (recreatedSession?.ok) {
-                        setCode(recreatedSession.code);
-                        setTeacherToken(recreatedSession.teacherToken);
-                        setCreated(true);
-                        setError("");
-                        saveTeacherSession({
-                            code: recreatedSession.code,
-                            teacherToken: recreatedSession.teacherToken,
-                        });
-                        return;
-                    }
-                }
-
-                if (storedSession) {
-                    ensureSession();
-                    return;
-                }
-            }
-
-            if (response?.code === "TEACHER_ACCESS_DENIED") {
-                clearTeacherAccessPin();
-                setAccessPin("");
-                setError(getSocketErrorMessage(response));
-                return;
-            }
-
-            if (response?.code === "SOCKET_CONNECT_TIMEOUT" || response?.code === "SOCKET_CONNECT_ERROR") {
+                setSession(null);
                 setError("");
+                setIsRestoring(false);
                 return;
             }
 
-            setError(getSocketErrorMessage(response) || kz.errors.createSession);
+            if (
+                response?.code !== "SOCKET_CONNECT_TIMEOUT" &&
+                response?.code !== "SOCKET_CONNECT_ERROR" &&
+                response?.code !== "ACK_TIMEOUT"
+            ) {
+                setError(getSocketErrorMessage(response) || kz.errors.createSession);
+            }
+
+            setIsRestoring(false);
         }
 
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
             setSession(state);
             if (state?.code) {
                 setCode(state.code);
-                setCreated(true);
                 setError("");
             }
         });
@@ -149,18 +82,19 @@ export default function TeacherPage() {
         const unsubscribeConnection = sessionClient.subscribeToConnection((event) => {
             setConnectionState(event.state);
 
-            if (event.type === "connect" && !creatingSessionRef.current) {
-                ensureSession();
+            if (event.type === "connect") {
+                restoreSession();
             }
         });
 
-        ensureSession();
+        restoreSession();
 
         return () => {
+            isMounted = false;
             unsubscribeState();
             unsubscribeConnection();
         };
-    }, [created]);
+    }, []);
 
     const joinUrl = useMemo(() => {
         if (!code) return "";
@@ -176,6 +110,7 @@ export default function TeacherPage() {
     const currentQuestionNumber = (session?.currentQuestionIndex ?? 0) + 1;
     const totalQuestions = session?.totalQuestions ?? 0;
     const connectionMessage = getConnectionMessage(connectionState, sessionClient.serverUrl);
+    const isAuthorized = Boolean(code && teacherToken);
 
     async function handleAction(action) {
         setError("");
@@ -186,8 +121,8 @@ export default function TeacherPage() {
                 clearTeacherSession();
                 setCode("");
                 setTeacherToken("");
-                setCreated(false);
                 setSession(null);
+                setIsRestoring(false);
             }
 
             setError(getSocketErrorMessage(res) || kz.errors.operationFailed);
@@ -201,51 +136,57 @@ export default function TeacherPage() {
         }
 
         setError("");
-        creatingSessionRef.current = true;
+        restoreInFlightRef.current = true;
+        setIsRestoring(true);
         const res = await sessionClient.createTeacherSession(accessPin.trim());
-        creatingSessionRef.current = false;
+        restoreInFlightRef.current = false;
+        setIsRestoring(false);
 
         if (!res?.ok) {
-            if (res?.code === "TEACHER_ACCESS_DENIED") {
-                clearTeacherAccessPin();
-            }
-
             setError(getSocketErrorMessage(res) || kz.errors.createSession);
             return;
         }
 
-        saveTeacherAccessPin(accessPin.trim());
         saveTeacherSession({
             code: res.code,
             teacherToken: res.teacherToken,
         });
         setCode(res.code);
         setTeacherToken(res.teacherToken);
-        setCreated(true);
         setError("");
     }
 
-    if (!created) {
+    if (!isAuthorized) {
         return (
             <div className="center-shell">
                 <div className="center-card">
                     <div className="badge badge-purple">{kz.teacher.kicker}</div>
-                    <h1 className="center-title mt-16">{kz.teacher.accessTitle}</h1>
-                    <p className="center-subtitle">{kz.teacher.accessSubtitle}</p>
+                    <h1 className="center-title mt-16">
+                        {isRestoring ? kz.teacher.restoreTitle : kz.teacher.accessTitle}
+                    </h1>
+                    <p className="center-subtitle">
+                        {isRestoring ? kz.teacher.restoreSubtitle : kz.teacher.accessSubtitle}
+                    </p>
 
-                    <input
-                        className="input"
-                        placeholder={kz.teacher.accessPlaceholder}
-                        value={accessPin}
-                        onChange={(event) => setAccessPin(event.target.value)}
-                        maxLength={32}
-                    />
+                    {isRestoring ? (
+                        <div className="empty-state">{kz.teacher.restoreHint}</div>
+                    ) : (
+                        <>
+                            <input
+                                className="input"
+                                placeholder={kz.teacher.accessPlaceholder}
+                                value={accessPin}
+                                onChange={(event) => setAccessPin(event.target.value)}
+                                maxLength={32}
+                            />
 
-                    <div className="button-row mt-16">
-                        <button className="btn btn-primary" onClick={handleTeacherAccess}>
-                            {kz.buttons.authorizeTeacher}
-                        </button>
-                    </div>
+                            <div className="button-row mt-16">
+                                <button className="btn btn-primary" onClick={handleTeacherAccess}>
+                                    {kz.buttons.authorizeTeacher}
+                                </button>
+                            </div>
+                        </>
+                    )}
 
                     {connectionMessage ? <div className="helper mt-16">{connectionMessage}</div> : null}
                     {error ? <div className="inline-error mt-16">{error}</div> : null}
