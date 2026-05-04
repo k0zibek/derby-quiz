@@ -43,6 +43,44 @@ export type Player = {
   joinedAt: number;
 };
 
+export type PersistedPlayer = Player & {
+  playerToken: string;
+};
+
+export type PersistedSession = {
+  code: string;
+  teacherToken: string;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+  status: GameStatus;
+  currentQuestionIndex: number;
+  questions: Question[];
+  players: Record<string, PersistedPlayer>;
+};
+
+export type AnswerRecord = {
+  id: string;
+  sessionCode: string;
+  playerId: string;
+  questionId: string;
+  questionIndex: number;
+  optionIndex: number;
+  isCorrect: boolean;
+  points: number;
+  answeredAt: number;
+};
+
+export type QuestionSet = {
+  id: string;
+  title: string;
+  questions: Question[];
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type RuntimeSessionSnapshot = PersistedSession;
+
 export type TeacherState = {
   role: "teacher";
   code: string;

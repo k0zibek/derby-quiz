@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 client/public/question-assets
+server/data
 
 # Editor directories and files
 .vscode/*

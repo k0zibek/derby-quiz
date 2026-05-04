@@ -13,30 +13,37 @@
 - `teacher` защищён PIN-кодом доступа
 
 ## Стек
-- `client`: React + Vite + TypeScript + Socket.IO client
-- `server`: Express + TypeScript + Socket.IO server
+- `client`: React + Vite + TypeScript + Tailwind CSS + Socket.IO client
+- `server`: Fastify + TypeScript + Socket.IO server
+- `storage`: local SQLite через Drizzle/better-sqlite3
 - `shared`: type-only контракты для вопросов, session state и Socket.IO events
 - `questions.json`: нормализованный набор rich-вопросов для runtime
 
 ## Что уже есть
 - вход игроков по коду игры
 - восстановление игрока после refresh через `localStorage`
+- восстановление активных сессий из SQLite после рестарта сервера
 - state machine игры: `lobby -> question -> result -> lobby|finished`
 - единый источник вопросов в [`questions.json`](./questions.json)
 - серверная валидация rich-question schema в [`server/questions.ts`](./server/questions.ts)
+- runtime validation env/socket payloads через Zod
 - TTL cleanup для старых сессий
-- health/readiness endpoints: `/health`, `/ready`
+- health/readiness/classroom endpoints: `/health`, `/ready`, `/classroom-info`
 - unit и integration тесты для сервера
-- единая команда запуска `client + server`
+- единая команда classroom-запуска одним Node-процессом
 - strict TypeScript typecheck для клиента, сервера и socket-контрактов
 
 ## Структура
 - [`client`](./client) - интерфейсы teacher/player/screen
+- [`client/src/components/ui.tsx`](./client/src/components/ui.tsx) - локальные UI primitives
+- [`client/src/hooks/sessionHooks.ts`](./client/src/hooks/sessionHooks.ts) - typed session/socket hooks
 - [`client/src/components/QuestionContent.tsx`](./client/src/components/QuestionContent.tsx) - общий renderer passage/image/options
 - [`client/src/i18n/kz.ts`](./client/src/i18n/kz.ts) - казахский copy-слой
 - [`shared/types.ts`](./shared/types.ts) - type-only contracts для client/server
 - [`server/index.ts`](./server/index.ts) - HTTP + Socket.IO transport
 - [`server/game.ts`](./server/game.ts) - игровая доменная логика
+- [`server/db`](./server/db) - SQLite schema и repository
+- [`server/validation.ts`](./server/validation.ts) - Zod schemas для socket payloads
 - [`server/config.ts`](./server/config.ts) - env-конфиг
 - [`server/questions.ts`](./server/questions.ts) - загрузка и валидация вопросов
 - [`questions.json`](./questions.json) - runtime-набор вопросов
@@ -64,7 +71,19 @@ npm run dev
 - server на `http://localhost:4000`
 - client на `http://localhost:5173`
 
-### 4. Или запустить части отдельно
+### 4. Classroom mode одним процессом
+```bash
+npm run classroom
+```
+
+Команда собирает клиент, собирает сервер и запускает Fastify так, чтобы он отдавал React build, HTTP endpoints и Socket.IO из одного Node-процесса. В терминале выводятся LAN-ссылки для teacher/screen/join и PIN учителя.
+
+Данные сессий пишутся в:
+```
+server/data/classroom.sqlite
+```
+
+### 5. Или запустить части отдельно
 
 #### Сервер
 ```bash
@@ -111,6 +130,8 @@ VITE_SERVER_URL=http://localhost:4000 npm --workspace client run dev
 - `SESSION_TTL_MS` — TTL сессии в миллисекундах, по умолчанию `14400000`
 - `SESSION_CLEANUP_INTERVAL_MS` — интервал cleanup в миллисекундах, по умолчанию `300000`
 - `TEACHER_ACCESS_PIN` — PIN для доступа на страницу учителя; если не задан, сервер сгенерирует PIN и выведет его в терминал
+- `CLASSROOM_DATABASE_PATH` — путь к SQLite-файлу, по умолчанию `server/data/classroom.sqlite` при запуске через workspace scripts
+- `CLASSROOM_STATIC_DIR` — путь к собранному клиенту для single-process classroom mode
 
 Пример:
 ```bash
@@ -139,6 +160,6 @@ npm run audit:prod
 4. Запускай вопрос, показывай результаты, переходи к следующему
 
 ## Ограничения текущей версии
-- сессии хранятся in-memory и пропадают при рестарте сервера
+- runtime state держится in-memory для скорости, а активные сессии сохраняются в SQLite для restart restore
 - teacher защищён PIN-кодом доступа, а teacher/player действия подтверждаются токенами сессии
 - контентный слой не имеет админки или автоматического импорта из DOCX

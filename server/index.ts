@@ -1,15 +1,30 @@
-import cors from "cors";
-import express from "express";
-import http from "node:http";
+import fastifyCors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import Fastify from "fastify";
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Server } from "socket.io";
 
 import type { ClientToServerEvents, ErrorResponse, ServerToClientEvents } from "../shared/types.js";
+import { buildClassroomInfo, printClassroomInfo } from "./classroom.js";
 import type { AppConfig } from "./config.js";
 import { loadConfig } from "./config.js";
+import { createClassroomDatabase } from "./db/database.js";
+import type { ClassroomRepository } from "./db/repository.js";
+import { ClassroomRepository as Repository } from "./db/repository.js";
 import type { SessionManager } from "./game.js";
 import { createSessionManager } from "./game.js";
+import {
+    formatPayloadError,
+    playerJoinPayloadSchema,
+    playerRejoinPayloadSchema,
+    screenJoinPayloadSchema,
+    submitAnswerPayloadSchema,
+    teacherCreateSessionPayloadSchema,
+    teacherSessionPayloadSchema,
+} from "./validation.js";
 
 type ServerSideEvents = Record<string, never>;
 type SocketData = {
@@ -18,13 +33,10 @@ type SocketData = {
     playerId?: string;
 };
 
-type CorsOriginMatcher =
-    | "*"
-    | ((origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => void);
-
 type CreateAppServerOptions = {
     config?: AppConfig;
     sessionManager?: SessionManager;
+    repository?: ClassroomRepository | null;
 };
 
 type RateLimitBucket = {
@@ -41,19 +53,6 @@ const RATE_LIMITS = {
     screenJoin: 20,
 } as const;
 
-function createCorsOriginMatcher(origins: AppConfig["clientOrigins"]): CorsOriginMatcher {
-    if (origins === "*") return "*";
-
-    return function corsOrigin(origin, callback) {
-        if (!origin || origins.includes(origin)) {
-            callback(null, true);
-            return;
-        }
-
-        callback(new Error("Origin is not allowed by CORS"));
-    };
-}
-
 function rateLimitedError(): ErrorResponse {
     return {
         ok: false,
@@ -62,52 +61,88 @@ function rateLimitedError(): ErrorResponse {
     };
 }
 
-export function createAppServer(options: CreateAppServerOptions = {}) {
+function persistSession(sessionManager: SessionManager, repository: ClassroomRepository | null, code: string): void {
+    const session = sessionManager.getSession(code);
+    if (!session || !repository) return;
+    repository.saveSession(sessionManager.toPersistedSession(session));
+}
+
+function clientIndexPath(staticDir: string | null): string | null {
+    if (!staticDir) return null;
+    const indexPath = path.join(staticDir, "index.html");
+    return fs.existsSync(indexPath) ? indexPath : null;
+}
+
+export async function createAppServer(options: CreateAppServerOptions = {}) {
     const config = options.config ?? loadConfig();
-    const app = express();
-    const server = http.createServer(app);
+    const ownedDatabase = options.repository === undefined
+        ? createClassroomDatabase(config.databasePath)
+        : null;
+    const repository = options.repository === undefined
+        ? new Repository(ownedDatabase!)
+        : options.repository;
+    const persistedSessions = repository?.listSessions() ?? [];
     const sessionManager = options.sessionManager ?? createSessionManager({
+        initialSessions: persistedSessions,
         maxPlayersPerSession: config.maxPlayersPerSession,
         sessionTtlMs: config.sessionTtlMs,
     });
+    const app = Fastify({ logger: false });
 
-    app.use(cors({
-        origin: createCorsOriginMatcher(config.clientOrigins),
-    }));
-    app.use(express.json());
+    await app.register(fastifyCors, {
+        origin: config.clientOrigins === "*" ? true : config.clientOrigins,
+    });
 
-    const io = new Server<ClientToServerEvents, ServerToClientEvents, ServerSideEvents, SocketData>(server, {
+    const indexPath = clientIndexPath(config.staticDir);
+    if (config.staticDir && indexPath) {
+        await app.register(fastifyStatic, {
+            root: config.staticDir,
+            prefix: "/",
+        });
+    }
+
+    const io = new Server<ClientToServerEvents, ServerToClientEvents, ServerSideEvents, SocketData>(app.server, {
         cors: {
-            origin: createCorsOriginMatcher(config.clientOrigins),
+            origin: config.clientOrigins === "*" ? "*" : config.clientOrigins,
             methods: ["GET", "POST"],
         },
     });
 
-    app.get("/", (_, res) => {
-        res.json({
+    app.get("/health", async () => ({
+        ok: true,
+        status: "healthy",
+        activeSessions: Object.keys(sessionManager.sessions).length,
+        uptimeSeconds: Math.round(process.uptime()),
+    }));
+
+    app.get("/ready", async () => ({
+        ok: true,
+        status: "ready",
+        activeSessions: Object.keys(sessionManager.sessions).length,
+    }));
+
+    app.get("/classroom-info", async () => buildClassroomInfo({
+        port: config.port,
+        teacherAccessPin: config.teacherAccessPin,
+    }));
+
+    app.get("/", async (_request, reply) => {
+        if (indexPath) return reply.sendFile("index.html");
+        return {
             ok: true,
             message: "Kahoot horses server is running",
-        });
+        };
     });
 
-    app.get("/health", (_, res) => {
-        const activeSessions = Object.keys(sessionManager.sessions).length;
+    if (indexPath) {
+        app.setNotFoundHandler(async (request, reply) => {
+            if (request.method === "GET" && !request.url.startsWith("/socket.io")) {
+                return reply.sendFile("index.html");
+            }
 
-        res.json({
-            ok: true,
-            status: "healthy",
-            activeSessions,
-            uptimeSeconds: Math.round(process.uptime()),
+            return reply.code(404).send({ ok: false, error: "Not found" });
         });
-    });
-
-    app.get("/ready", (_, res) => {
-        res.json({
-            ok: true,
-            status: "ready",
-            activeSessions: Object.keys(sessionManager.sessions).length,
-        });
-    });
+    }
 
     function emitAllState(code: string): void {
         const session = sessionManager.getSession(code);
@@ -154,14 +189,20 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             return bucket.count > limit;
         }
 
-        socket.on("teacher:createSession", (payload, callback) => {
+        socket.on("teacher:createSession", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:createSession", RATE_LIMITS.teacherCreateSession)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
-                const accessResult = validateTeacherAccessPin(payload?.accessPin);
+                const payload = teacherCreateSessionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const accessResult = validateTeacherAccessPin(payload.data.accessPin);
                 if (!accessResult.ok) {
                     callback?.(accessResult);
                     return;
@@ -185,6 +226,7 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
                 socket.data.role = "teacher";
                 socket.data.code = result.code;
                 socket.join(`teacher:${result.code}`);
+                persistSession(sessionManager, repository, result.code);
                 callback?.({ ok: true, code: result.code, teacherToken: result.teacherToken });
                 emitAllState(result.code);
             } catch (error) {
@@ -197,13 +239,20 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("teacher:joinSession", ({ code, teacherToken }, callback) => {
+        socket.on("teacher:joinSession", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:joinSession", RATE_LIMITS.teacherAction)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = teacherSessionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, teacherToken } = payload.data;
                 const result = sessionManager.attachTeacher({ code, teacherToken });
                 if (!result.ok) {
                     callback?.(result);
@@ -213,6 +262,7 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
                 socket.data.role = "teacher";
                 socket.data.code = code;
                 socket.join(`teacher:${code}`);
+                persistSession(sessionManager, repository, code);
                 callback?.({ ok: true });
                 emitAllState(code);
             } catch (error) {
@@ -225,13 +275,20 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("screen:join", ({ code }, callback) => {
+        socket.on("screen:join", (rawPayload, callback) => {
             try {
                 if (isRateLimited("screen:join", RATE_LIMITS.screenJoin)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = screenJoinPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code } = payload.data;
                 const result = sessionManager.attachScreen(code);
                 if (!result.ok) {
                     callback?.(result);
@@ -241,6 +298,7 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
                 socket.data.role = "screen";
                 socket.data.code = code;
                 socket.join(`screen:${code}`);
+                persistSession(sessionManager, repository, code);
                 callback?.({ ok: true });
                 emitAllState(code);
             } catch (error) {
@@ -253,13 +311,20 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("player:join", ({ code, name }, callback) => {
+        socket.on("player:join", (rawPayload, callback) => {
             try {
                 if (isRateLimited("player:join", RATE_LIMITS.playerJoin)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = playerJoinPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, name } = payload.data;
                 const result = sessionManager.joinPlayer({ code, name, socketId: socket.id });
                 if (!result.ok) {
                     callback?.(result);
@@ -269,6 +334,7 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
                 socket.data.role = "player";
                 socket.data.code = code;
                 socket.data.playerId = result.playerId;
+                persistSession(sessionManager, repository, code);
                 callback?.({ ok: true, playerId: result.playerId, playerToken: result.playerToken });
                 emitAllState(code);
             } catch (error) {
@@ -281,13 +347,20 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("player:rejoin", ({ code, playerId, playerToken }, callback) => {
+        socket.on("player:rejoin", (rawPayload, callback) => {
             try {
                 if (isRateLimited("player:rejoin", RATE_LIMITS.playerJoin)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = playerRejoinPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, playerId, playerToken } = payload.data;
                 const result = sessionManager.rejoinPlayer({ code, playerId, playerToken, socketId: socket.id });
                 if (!result.ok) {
                     callback?.(result);
@@ -297,6 +370,7 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
                 socket.data.role = "player";
                 socket.data.code = code;
                 socket.data.playerId = playerId;
+                persistSession(sessionManager, repository, code);
                 callback?.({
                     ok: true,
                     playerId,
@@ -313,16 +387,24 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("teacher:startQuestion", ({ code, teacherToken }, callback) => {
+        socket.on("teacher:startQuestion", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:startQuestion", RATE_LIMITS.teacherAction)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = teacherSessionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, teacherToken } = payload.data;
                 const result = sessionManager.startQuestion({ code, teacherToken });
                 callback?.(result.ok ? { ok: true } : result);
                 if (result.ok || result.code === "GAME_ALREADY_FINISHED") {
+                    persistSession(sessionManager, repository, code);
                     emitAllState(code);
                 }
             } catch (error) {
@@ -335,16 +417,37 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("player:submitAnswer", ({ code, playerId, playerToken, optionIndex }, callback) => {
+        socket.on("player:submitAnswer", (rawPayload, callback) => {
             try {
                 if (isRateLimited("player:submitAnswer", RATE_LIMITS.playerAction)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = submitAnswerPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, playerId, playerToken, optionIndex } = payload.data;
                 const result = sessionManager.submitAnswer({ code, playerId, playerToken, optionIndex });
                 callback?.(result);
                 if (result.ok) {
+                    const session = sessionManager.getSession(code);
+                    const question = session?.questions[session.currentQuestionIndex];
+                    if (session && question && repository) {
+                        repository.recordAnswer({
+                            sessionCode: code,
+                            playerId,
+                            questionId: question.id,
+                            questionIndex: session.currentQuestionIndex,
+                            optionIndex,
+                            isCorrect: result.isCorrect,
+                            points: result.points,
+                        });
+                    }
+                    persistSession(sessionManager, repository, code);
                     emitAllState(code);
                 }
             } catch (error) {
@@ -357,16 +460,24 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("teacher:showResults", ({ code, teacherToken }, callback) => {
+        socket.on("teacher:showResults", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:showResults", RATE_LIMITS.teacherAction)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = teacherSessionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, teacherToken } = payload.data;
                 const result = sessionManager.showResults({ code, teacherToken });
                 callback?.(result.ok ? { ok: true } : result);
                 if (result.ok) {
+                    persistSession(sessionManager, repository, code);
                     emitAllState(code);
                 }
             } catch (error) {
@@ -379,16 +490,24 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("teacher:nextQuestion", ({ code, teacherToken }, callback) => {
+        socket.on("teacher:nextQuestion", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:nextQuestion", RATE_LIMITS.teacherAction)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = teacherSessionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, teacherToken } = payload.data;
                 const result = sessionManager.nextQuestion({ code, teacherToken });
                 callback?.(result.ok ? { ok: true, finished: result.finished } : result);
                 if (result.ok) {
+                    persistSession(sessionManager, repository, code);
                     emitAllState(code);
                 }
             } catch (error) {
@@ -401,16 +520,24 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
             }
         });
 
-        socket.on("teacher:resetGame", ({ code, teacherToken }, callback) => {
+        socket.on("teacher:resetGame", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:resetGame", RATE_LIMITS.teacherAction)) {
                     callback?.(rateLimitedError());
                     return;
                 }
 
+                const payload = teacherSessionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const { code, teacherToken } = payload.data;
                 const result = sessionManager.resetGame({ code, teacherToken });
                 callback?.(result.ok ? { ok: true } : result);
                 if (result.ok) {
+                    persistSession(sessionManager, repository, code);
                     emitAllState(code);
                 }
             } catch (error) {
@@ -428,6 +555,7 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
                 const { role, code, playerId } = socket.data;
                 sessionManager.markDisconnected({ role, code, playerId });
                 if (code) {
+                    persistSession(sessionManager, repository, code);
                     emitAllState(code);
                 }
                 console.log(`Socket disconnected: ${socket.id}`);
@@ -448,36 +576,27 @@ export function createAppServer(options: CreateAppServerOptions = {}) {
 
     return {
         app,
-        server,
+        server: app.server,
         io,
         config,
         sessionManager,
-        close: () => {
+        repository,
+        listen: (host = "0.0.0.0") => app.listen({ port: config.port, host }),
+        close: async () => {
             clearInterval(cleanupTimer);
-            return new Promise<void>((resolve, reject) => {
-                io.close((ioError) => {
-                    server.close((serverError?: Error) => {
-                        const closeError = ioError ?? serverError;
-                        if (closeError && (closeError as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
-                            reject(closeError);
-                            return;
-                        }
-
-                        resolve();
-                    });
-                });
-            });
+            await io.close();
+            await app.close();
+            ownedDatabase?.close();
         },
     };
 }
 
 const entryPath = fileURLToPath(import.meta.url);
 if (process.argv[1] && entryPath === process.argv[1]) {
-    const runtime = createAppServer();
-    runtime.server.listen(runtime.config.port, "0.0.0.0", () => {
-        console.log(`Server running on http://0.0.0.0:${runtime.config.port}`);
-        if (runtime.config.teacherAccessPinIsGenerated) {
-            console.log(`Teacher access PIN: ${runtime.config.teacherAccessPin}`);
-        }
-    });
+    const runtime = await createAppServer();
+    await runtime.listen();
+    printClassroomInfo(buildClassroomInfo({
+        port: runtime.config.port,
+        teacherAccessPin: runtime.config.teacherAccessPin,
+    }));
 }

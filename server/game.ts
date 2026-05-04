@@ -6,6 +6,8 @@ import type {
     GameStatus,
     Player,
     PlayerState,
+    PersistedPlayer,
+    PersistedSession,
     PublicQuestion,
     Question,
     ScreenState,
@@ -21,12 +23,11 @@ export const GAME_STATUS = {
     FINISHED: "finished",
 } as const satisfies Record<string, GameStatus>;
 
-type InternalPlayer = Player & {
-    playerToken: string;
+type InternalPlayer = PersistedPlayer & {
     socketId: string | null;
 };
 
-type Session = {
+export type Session = {
     code: string;
     teacherToken: string;
     createdAt: number;
@@ -46,6 +47,7 @@ type SessionSnapshot = {
 
 type SessionManagerOptions = {
     initialQuestions?: Question[];
+    initialSessions?: PersistedSession[];
     maxPlayersPerSession?: number;
     sessionTtlMs?: number;
     now?: () => number;
@@ -175,6 +177,7 @@ function cloneQuestion(question: Question): Question {
 export function createSessionManager(options: SessionManagerOptions = {}) {
     const {
         initialQuestions = defaultQuestions,
+        initialSessions = [],
         maxPlayersPerSession = 50,
         sessionTtlMs = 1000 * 60 * 60 * 4,
         now = () => Date.now(),
@@ -186,8 +189,54 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
 
     const sessions: Record<string, Session> = Object.create(null);
 
+    for (const session of initialSessions) {
+        sessions[session.code] = {
+            ...session,
+            questions: session.questions.map(cloneQuestion),
+            players: Object.fromEntries(
+                Object.entries(session.players).map(([playerId, player]) => [
+                    playerId,
+                    {
+                        ...player,
+                        socketId: null,
+                        connected: false,
+                    },
+                ])
+            ),
+        };
+    }
+
     function cloneQuestions(): Question[] {
         return initialQuestions.map(cloneQuestion);
+    }
+
+    function toPersistedSession(session: Session): PersistedSession {
+        return {
+            code: session.code,
+            teacherToken: session.teacherToken,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            expiresAt: session.expiresAt,
+            status: session.status,
+            currentQuestionIndex: session.currentQuestionIndex,
+            questions: session.questions.map(cloneQuestion),
+            players: Object.values(session.players).reduce<Record<string, PersistedPlayer>>((acc, player) => {
+                acc[player.id] = {
+                    id: player.id,
+                    playerToken: player.playerToken,
+                    name: player.name,
+                    score: player.score,
+                    progress: player.progress,
+                    color: player.color,
+                    connected: false,
+                    answeredCurrent: player.answeredCurrent,
+                    selectedOption: player.selectedOption,
+                    lastAnswerCorrect: player.lastAnswerCorrect,
+                    joinedAt: player.joinedAt,
+                };
+                return acc;
+            }, Object.create(null) as Record<string, PersistedPlayer>),
+        };
     }
 
     function getSession(code: string): Session | null {
@@ -713,6 +762,7 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
         markDisconnected,
         cleanupExpiredSessions,
         snapshot,
+        toPersistedSession,
     };
 }
 

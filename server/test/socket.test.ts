@@ -1,16 +1,35 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { io as createClient, type Socket as ClientSocket } from "socket.io-client";
 
 import type { ClientToServerEvents, ServerToClientEvents, SessionState } from "../../shared/types.js";
+import type { AppConfig } from "../config.js";
 import { createAppServer } from "../index.js";
 
 type TestSocket = ClientSocket<ServerToClientEvents, ClientToServerEvents>;
 type AckEmitter = {
     emit: (eventName: string, payload: object, callback: (response: unknown) => void) => void;
 };
+
+function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
+    return {
+        port: 0,
+        clientOrigins: "*",
+        maxPlayersPerSession: 50,
+        sessionTtlMs: 1000 * 60 * 60,
+        cleanupIntervalMs: 1000 * 60 * 60,
+        teacherAccessPin: "test-pin",
+        teacherAccessPinIsGenerated: false,
+        databasePath: ":memory:",
+        staticDir: null,
+        ...overrides,
+    };
+}
 
 function onceConnect(socket: TestSocket): Promise<void> {
     return new Promise((resolve) => {
@@ -44,21 +63,12 @@ function emitAck<T>(socket: TestSocket, eventName: string, payload: object): Pro
 }
 
 test("socket flow covers teacher, players, results, and finish", async () => {
-    const runtime = createAppServer({
-        config: {
-            port: 0,
-            clientOrigins: "*",
-            maxPlayersPerSession: 50,
-            sessionTtlMs: 1000 * 60 * 60,
-            cleanupIntervalMs: 1000 * 60 * 60,
-            teacherAccessPin: "test-pin",
-            teacherAccessPinIsGenerated: false,
-        },
+    const runtime = await createAppServer({
+        config: testConfig(),
+        repository: null,
     });
 
-    await new Promise<void>((resolve) => {
-        runtime.server.listen(0, "127.0.0.1", resolve);
-    });
+    await runtime.listen("127.0.0.1");
 
     const address = runtime.server.address();
     assert.ok(address && typeof address !== "string");
@@ -124,6 +134,14 @@ test("socket flow covers teacher, players, results, and finish", async () => {
         assert.equal(unauthorizedTeacher.ok, false);
         assert.equal(unauthorizedTeacher.code, "UNAUTHORIZED");
 
+        const invalidPayload = await emitAck<{ ok: false; code: string }>(
+            teacher,
+            "teacher:startQuestion",
+            { code }
+        );
+        assert.equal(invalidPayload.ok, false);
+        assert.equal(invalidPayload.code, "INVALID_PAYLOAD");
+
         const startQuestion = await emitAck<{ ok: true }>(
             teacher,
             "teacher:startQuestion",
@@ -136,6 +154,19 @@ test("socket flow covers teacher, players, results, and finish", async () => {
             onceState(playerTwo),
         ]);
         assert.equal(playerOneQuestion.status, "question");
+
+        const invalidOption = await emitAck<{ ok: false; code: string }>(
+            playerTwo,
+            "player:submitAnswer",
+            {
+                code,
+                playerId: joinedTwo.playerId,
+                playerToken: joinedTwo.playerToken,
+                optionIndex: 1.5,
+            }
+        );
+        assert.equal(invalidOption.ok, false);
+        assert.equal(invalidOption.code, "INVALID_PAYLOAD");
 
         const submitOne = await emitAck<{ ok: true }>(
             playerOne,
@@ -174,19 +205,6 @@ test("socket flow covers teacher, players, results, and finish", async () => {
         assert.equal(unauthorizedPlayer.ok, false);
         assert.equal(unauthorizedPlayer.code, "UNAUTHORIZED");
 
-        const invalidOption = await emitAck<{ ok: false; code: string }>(
-            playerTwo,
-            "player:submitAnswer",
-            {
-                code,
-                playerId: joinedTwo.playerId,
-                playerToken: joinedTwo.playerToken,
-                optionIndex: 1.5,
-            }
-        );
-        assert.equal(invalidOption.ok, false);
-        assert.equal(invalidOption.code, "ALREADY_ANSWERED");
-
         const showResults = await emitAck<{ ok: true }>(
             teacher,
             "teacher:showResults",
@@ -209,22 +227,63 @@ test("socket flow covers teacher, players, results, and finish", async () => {
     }
 });
 
+test("socket session can be restored from SQLite after server restart", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kahoot-horses-restore-"));
+    const databasePath = path.join(dir, "classroom.sqlite");
+    const config = testConfig({ databasePath });
+
+    const firstRuntime = await createAppServer({ config });
+    await firstRuntime.listen("127.0.0.1");
+    const firstAddress = firstRuntime.server.address();
+    assert.ok(firstAddress && typeof firstAddress !== "string");
+    const firstUrl = `http://127.0.0.1:${(firstAddress as AddressInfo).port}`;
+    const firstTeacher: TestSocket = createClient(firstUrl, { transports: ["websocket"] });
+
+    let code = "";
+    let teacherToken = "";
+    try {
+        await onceConnect(firstTeacher);
+        const created = await emitAck<{ ok: true; code: string; teacherToken: string }>(
+            firstTeacher,
+            "teacher:createSession",
+            { accessPin: "test-pin" }
+        );
+        assert.equal(created.ok, true);
+        code = created.code;
+        teacherToken = created.teacherToken;
+    } finally {
+        firstTeacher.close();
+        await firstRuntime.close();
+    }
+
+    const secondRuntime = await createAppServer({ config });
+    await secondRuntime.listen("127.0.0.1");
+    const secondAddress = secondRuntime.server.address();
+    assert.ok(secondAddress && typeof secondAddress !== "string");
+    const secondUrl = `http://127.0.0.1:${(secondAddress as AddressInfo).port}`;
+    const secondTeacher: TestSocket = createClient(secondUrl, { transports: ["websocket"] });
+
+    try {
+        await onceConnect(secondTeacher);
+        const rejoined = await emitAck<{ ok: true }>(
+            secondTeacher,
+            "teacher:joinSession",
+            { code, teacherToken }
+        );
+        assert.equal(rejoined.ok, true);
+    } finally {
+        secondTeacher.close();
+        await secondRuntime.close();
+    }
+});
+
 test("socket flow returns SESSION_FULL when max players is reached", async () => {
-    const runtime = createAppServer({
-        config: {
-            port: 0,
-            clientOrigins: "*",
-            maxPlayersPerSession: 1,
-            sessionTtlMs: 1000 * 60 * 60,
-            cleanupIntervalMs: 1000 * 60 * 60,
-            teacherAccessPin: "test-pin",
-            teacherAccessPinIsGenerated: false,
-        },
+    const runtime = await createAppServer({
+        config: testConfig({ maxPlayersPerSession: 1 }),
+        repository: null,
     });
 
-    await new Promise<void>((resolve) => {
-        runtime.server.listen(0, "127.0.0.1", resolve);
-    });
+    await runtime.listen("127.0.0.1");
 
     const address = runtime.server.address();
     assert.ok(address && typeof address !== "string");
