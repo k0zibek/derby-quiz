@@ -25,10 +25,6 @@
   --warning: #ca8a04;
   --warning-soft: #fef3c7;
   --purple: #7c3aed;
-  --surface-green: #eaf9ea;
-  --surface-blue: #eef5ff;
-  --surface-yellow: #fff9df;
-  --surface-pink: #fff0f7;
   --radius-xl: 24px;
   --radius-lg: 18px;
   --radius-md: 14px;
@@ -136,10 +132,6 @@ button {
 
 .grid-2 {
   grid-template-columns: 1.15fr 0.85fr;
-}
-
-.grid-3 {
-  grid-template-columns: repeat(3, 1fr);
 }
 
 .card {
@@ -355,66 +347,6 @@ button {
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 12px;
-}
-
-.player-list {
-  display: grid;
-  gap: 12px;
-}
-
-.player-card {
-  border-radius: 18px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.92);
-  padding: 15px 16px;
-  display: grid;
-  gap: 10px;
-}
-
-.player-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.player-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.player-rank {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  background: #eff6ff;
-  color: #1d4ed8;
-  flex: 0 0 auto;
-}
-
-.player-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  flex: 0 0 auto;
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.75);
-}
-
-.player-name {
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-meta {
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .progress-track {
@@ -839,7 +771,6 @@ button {
 @media (max-width: 1100px) {
 
   .grid-2,
-  .grid-3,
   .stat-grid,
   .top3-grid {
     grid-template-columns: 1fr;
@@ -865,7 +796,6 @@ button {
     padding: 18px;
   }
 
-  .player-row,
   .section-header,
   .hero-row,
   .race-header {

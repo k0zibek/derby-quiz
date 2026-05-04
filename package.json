@@ -6,12 +6,20 @@
     "server"
   ],
   "scripts": {
-    "dev": "concurrently \"npm --workspace server start\" \"npm --workspace client run dev\"",
-    "build": "npm --workspace client run build",
+    "dev": "concurrently \"npm --workspace server run dev\" \"npm --workspace client run dev\"",
+    "build": "npm --workspace server run build && npm --workspace client run build",
     "lint": "npm --workspace client run lint",
-    "test": "npm --workspace server test"
+    "typecheck": "npm --workspace server run typecheck && npm --workspace client run typecheck",
+    "test": "npm run typecheck && npm --workspace server test",
+    "audit:prod": "npm audit --omit=dev"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.6.0",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.1"
   }
 }

@@ -31,7 +31,7 @@ test("normalizeQuestion supports reading questions with passages and images", ()
     assert.equal(question.type, "reading_mcq");
     assert.equal(question.passageTitle, "Абсент");
     assert.equal(question.image, "/question-assets/modo-4e/image1.png");
-    assert.equal(question.options[1].image, "/question-assets/modo-4e/image2.png");
+    assert.equal(question.options[1]!.image, "/question-assets/modo-4e/image2.png");
     assert.equal(question.correctIndex, 1);
 });
 

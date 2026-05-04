@@ -13,8 +13,9 @@
 - `teacher` защищён PIN-кодом доступа
 
 ## Стек
-- `client`: React + Vite + Socket.IO client
-- `server`: Express + Socket.IO server
+- `client`: React + Vite + TypeScript + Socket.IO client
+- `server`: Express + TypeScript + Socket.IO server
+- `shared`: type-only контракты для вопросов, session state и Socket.IO events
 - `questions.json`: нормализованный набор rich-вопросов для runtime
 
 ## Что уже есть
@@ -22,20 +23,22 @@
 - восстановление игрока после refresh через `localStorage`
 - state machine игры: `lobby -> question -> result -> lobby|finished`
 - единый источник вопросов в [`questions.json`](./questions.json)
-- серверная валидация rich-question schema в [`server/questions.js`](./server/questions.js)
+- серверная валидация rich-question schema в [`server/questions.ts`](./server/questions.ts)
 - TTL cleanup для старых сессий
 - health/readiness endpoints: `/health`, `/ready`
 - unit и integration тесты для сервера
 - единая команда запуска `client + server`
+- strict TypeScript typecheck для клиента, сервера и socket-контрактов
 
 ## Структура
 - [`client`](./client) - интерфейсы teacher/player/screen
-- [`client/src/components/QuestionContent.jsx`](./client/src/components/QuestionContent.jsx) - общий renderer passage/image/options
-- [`client/src/i18n/kz.js`](./client/src/i18n/kz.js) - казахский copy-слой
-- [`server/index.js`](./server/index.js) - HTTP + Socket.IO transport
-- [`server/game.js`](./server/game.js) - игровая доменная логика
-- [`server/config.js`](./server/config.js) - env-конфиг
-- [`server/questions.js`](./server/questions.js) - загрузка и валидация вопросов
+- [`client/src/components/QuestionContent.tsx`](./client/src/components/QuestionContent.tsx) - общий renderer passage/image/options
+- [`client/src/i18n/kz.ts`](./client/src/i18n/kz.ts) - казахский copy-слой
+- [`shared/types.ts`](./shared/types.ts) - type-only contracts для client/server
+- [`server/index.ts`](./server/index.ts) - HTTP + Socket.IO transport
+- [`server/game.ts`](./server/game.ts) - игровая доменная логика
+- [`server/config.ts`](./server/config.ts) - env-конфиг
+- [`server/questions.ts`](./server/questions.ts) - загрузка и валидация вопросов
 - [`questions.json`](./questions.json) - runtime-набор вопросов
 - [`package.json`](./package.json) - корневые команды проекта
 
@@ -65,6 +68,12 @@ npm run dev
 
 #### Сервер
 ```bash
+npm --workspace server run dev
+```
+
+Production-запуск сервера build-first:
+```bash
+npm --workspace server run build
 npm --workspace server start
 ```
 
@@ -105,17 +114,20 @@ VITE_SERVER_URL=http://localhost:4000 npm --workspace client run dev
 
 Пример:
 ```bash
-PORT=4000 CLIENT_ORIGINS=http://localhost:5173 TEACHER_ACCESS_PIN=246810 npm --workspace server start
+PORT=4000 CLIENT_ORIGINS=http://localhost:5173 TEACHER_ACCESS_PIN=246810 npm --workspace server run dev
 ```
 
 ## Проверки
 ```bash
 npm run lint
+npm run typecheck
 npm run build
 npm run test
+npm run audit:prod
 ```
 
 `npm test` запускает:
+- strict TypeScript typecheck
 - unit-тесты доменной логики сессий
 - unit-тесты loader'а вопросов
 - integration test для Socket.IO сценария teacher/player

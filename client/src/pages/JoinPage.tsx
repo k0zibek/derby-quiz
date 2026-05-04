@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
+import type { PlayerState } from "../../../shared/types";
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
 import { getConnectionMessage, getSocketErrorMessage, getStatusView, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
@@ -16,10 +17,11 @@ const OPTION_COLORS = [
 
 export default function JoinPage() {
     const { code } = useParams();
+    const gameCode = code ?? "";
     const [name, setName] = useState("");
     const [joined, setJoined] = useState(false);
     const [playerId, setPlayerId] = useState("");
-    const [session, setSession] = useState(null);
+    const [session, setSession] = useState<PlayerState | null>(null);
     const [joinLoading, setJoinLoading] = useState(false);
     const [answerFeedback, setAnswerFeedback] = useState("");
     const [connectionState, setConnectionState] = useState(sessionClient.getConnectionState());
@@ -29,7 +31,7 @@ export default function JoinPage() {
 
     useEffect(() => {
         async function restorePlayer() {
-            const savedPlayerSession = loadPlayerSession(code);
+            const savedPlayerSession = loadPlayerSession(gameCode);
             if (!savedPlayerSession || joined || restoreInFlightRef.current) {
                 setIsRejoining(false);
                 return;
@@ -39,7 +41,7 @@ export default function JoinPage() {
             setIsRejoining(true);
 
             const res = await sessionClient.rejoinPlayer(
-                code,
+                gameCode,
                 savedPlayerSession.playerId,
                 savedPlayerSession.playerToken
             );
@@ -59,7 +61,7 @@ export default function JoinPage() {
                 res?.code === "PLAYER_NOT_FOUND" ||
                 res?.code === "UNAUTHORIZED"
             ) {
-                clearPlayerSession(code);
+                clearPlayerSession(gameCode);
                 if (res?.code === "SESSION_NOT_FOUND") {
                     setSessionError(kz.errors.sessionNotFound);
                 }
@@ -78,6 +80,7 @@ export default function JoinPage() {
         }
 
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
+            if (state.role !== "player") return;
             setSession(state);
 
             if (state?.player?.id) {
@@ -111,7 +114,7 @@ export default function JoinPage() {
             unsubscribeState();
             unsubscribeConnection();
         };
-    }, [code, joined]);
+    }, [gameCode, joined]);
 
     const statusView = getStatusView(session?.status);
     const player = session?.player;
@@ -129,7 +132,7 @@ export default function JoinPage() {
         setJoinLoading(true);
         setSessionError("");
 
-        const res = await sessionClient.joinPlayer(code, name);
+        const res = await sessionClient.joinPlayer(gameCode, name);
         setJoinLoading(false);
 
         if (!res?.ok) {
@@ -141,7 +144,7 @@ export default function JoinPage() {
             return;
         }
 
-        savePlayerSession(code, {
+        savePlayerSession(gameCode, {
             playerId: res.playerId,
             playerToken: res.playerToken,
         });
@@ -149,10 +152,10 @@ export default function JoinPage() {
         setJoined(true);
     }
 
-    async function submitAnswer(optionIndex) {
+    async function submitAnswer(optionIndex: number) {
         if (!playerId || alreadyAnswered) return;
 
-        const savedPlayerSession = loadPlayerSession(code);
+        const savedPlayerSession = loadPlayerSession(gameCode);
         if (!savedPlayerSession) {
             setJoined(false);
             setPlayerId("");
@@ -162,7 +165,7 @@ export default function JoinPage() {
         }
 
         const res = await sessionClient.submitAnswer(
-            code,
+            gameCode,
             playerId,
             savedPlayerSession.playerToken,
             optionIndex
@@ -173,7 +176,7 @@ export default function JoinPage() {
                 res?.code === "PLAYER_NOT_FOUND" ||
                 res?.code === "SESSION_NOT_FOUND"
             ) {
-                clearPlayerSession(code);
+                clearPlayerSession(gameCode);
                 setJoined(false);
                 setPlayerId("");
                 setSession(null);
@@ -186,18 +189,18 @@ export default function JoinPage() {
         setAnswerFeedback(res.isCorrect ? kz.answerFeedback.correct : kz.answerFeedback.incorrect);
     }
 
-    const titleText = useMemo(() => {
-        if (!joined) return kz.join.entryTitle;
-        if (session?.status === "finished") return kz.join.thankYou;
-        return kz.appName;
-    }, [joined, session?.status]);
+    const titleText = !joined
+        ? kz.join.entryTitle
+        : session?.status === "finished"
+            ? kz.join.thankYou
+            : kz.appName;
 
     if (!joined) {
         return (
             <div className="center-shell">
                 <div className="center-card">
                     <div className="badge badge-purple">
-                        {kz.labels.code}: {code}
+                        {kz.labels.code}: {gameCode}
                     </div>
 
                     <h1 className="center-title mt-16">{titleText}</h1>
@@ -290,7 +293,7 @@ export default function JoinPage() {
                         >
                             <div className="option-grid mt-16">
                                 {session.currentQuestion.options.map((option, index) => {
-                                    const palette = OPTION_COLORS[index % OPTION_COLORS.length];
+                                    const palette = OPTION_COLORS[index % OPTION_COLORS.length] ?? OPTION_COLORS[0]!;
 
                                     return (
                                         <button

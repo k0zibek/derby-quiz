@@ -1,11 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
+import type { Player, ScreenState } from "../../../shared/types";
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
 import { getRaceStatusText, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
 
-function PodiumCard({ player, rank, emoji, ringColor }) {
+type RingColor = {
+    background: string;
+    color: string;
+};
+
+type LaneModel = {
+    player: Player;
+    rank: number;
+    left: number;
+};
+
+function PodiumCard({
+    player,
+    rank,
+    emoji,
+    ringColor,
+}: {
+    player: Player | undefined;
+    rank: number;
+    emoji: string;
+    ringColor: RingColor;
+}) {
     if (!player) {
         return (
             <div className="podium-card">
@@ -50,7 +72,7 @@ function PodiumCard({ player, rank, emoji, ringColor }) {
     );
 }
 
-function Lane({ lane }) {
+function Lane({ lane }: { lane: LaneModel }) {
     return (
         <div className="lane">
             <div className="horse-runner" style={{ left: `${lane.left}%` }}>
@@ -79,7 +101,8 @@ function Lane({ lane }) {
 
 export default function ScreenPage() {
     const { code } = useParams();
-    const [session, setSession] = useState(null);
+    const gameCode = code ?? "";
+    const [session, setSession] = useState<ScreenState | null>(null);
     const [error, setError] = useState("");
     const screenJoinedRef = useRef(false);
     const joiningScreenRef = useRef(false);
@@ -89,7 +112,7 @@ export default function ScreenPage() {
             if (screenJoinedRef.current || joiningScreenRef.current) return;
 
             joiningScreenRef.current = true;
-            const res = await sessionClient.joinScreen(code);
+            const res = await sessionClient.joinScreen(gameCode);
             joiningScreenRef.current = false;
 
             if (!res?.ok) {
@@ -107,6 +130,7 @@ export default function ScreenPage() {
         }
 
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
+            if (state.role !== "screen") return;
             setSession(state);
             screenJoinedRef.current = true;
             setError("");
@@ -124,7 +148,7 @@ export default function ScreenPage() {
             unsubscribeState();
             unsubscribeConnection();
         };
-    }, [code]);
+    }, [gameCode]);
 
     const players = useMemo(() => session?.players || [], [session?.players]);
     const topThree = players.slice(0, 3);
@@ -142,7 +166,7 @@ export default function ScreenPage() {
                 <section className="race-header">
                     <div>
                         <div className="badge badge-purple">
-                            {kz.labels.raceScreen} · {kz.labels.code.toLowerCase()} {code}
+                            {kz.labels.raceScreen} · {kz.labels.code.toLowerCase()} {gameCode}
                         </div>
                         <h1 className="race-title">{kz.screen.title}</h1>
                         <p className="race-subtitle">

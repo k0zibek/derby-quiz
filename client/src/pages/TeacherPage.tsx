@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 
+import type { AckResponse, TeacherState } from "../../../shared/types";
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
 import { getConnectionMessage, getSocketErrorMessage, getStatusView, kz } from "../i18n/kz";
 import { sessionClient } from "../sessionClient";
 import { clearTeacherSession, loadTeacherSession, saveTeacherSession } from "../sessionStorage";
 
-function copyText(text) {
+function copyText(text: string) {
     navigator.clipboard.writeText(text).catch(() => { });
 }
 
@@ -14,7 +15,7 @@ export default function TeacherPage() {
     const [accessPin, setAccessPin] = useState("");
     const [code, setCode] = useState("");
     const [teacherToken, setTeacherToken] = useState("");
-    const [session, setSession] = useState(null);
+    const [session, setSession] = useState<TeacherState | null>(null);
     const [isRestoring, setIsRestoring] = useState(() => Boolean(loadTeacherSession()));
     const [error, setError] = useState("");
     const [connectionState, setConnectionState] = useState(sessionClient.getConnectionState());
@@ -72,6 +73,7 @@ export default function TeacherPage() {
         }
 
         const unsubscribeState = sessionClient.subscribeToSessionState((state) => {
+            if (state.role !== "teacher") return;
             setSession(state);
             if (state?.code) {
                 setCode(state.code);
@@ -112,7 +114,7 @@ export default function TeacherPage() {
     const connectionMessage = getConnectionMessage(connectionState, sessionClient.serverUrl);
     const isAuthorized = Boolean(code && teacherToken);
 
-    async function handleAction(action) {
+    async function handleAction(action: () => Promise<AckResponse>) {
         setError("");
         const res = await action();
 

@@ -1,5 +1,17 @@
 import { nanoid } from "nanoid";
 
+import type {
+    AckResponse,
+    ErrorResponse,
+    GameStatus,
+    Player,
+    PlayerState,
+    PublicQuestion,
+    Question,
+    ScreenState,
+    TeacherQuestion,
+    TeacherState,
+} from "../shared/types.js";
 import { questions as defaultQuestions } from "./questions.js";
 
 export const GAME_STATUS = {
@@ -7,19 +19,59 @@ export const GAME_STATUS = {
     QUESTION: "question",
     RESULT: "result",
     FINISHED: "finished",
+} as const satisfies Record<string, GameStatus>;
+
+type InternalPlayer = Player & {
+    playerToken: string;
+    socketId: string | null;
 };
 
-export function createError(code, error) {
+type Session = {
+    code: string;
+    teacherToken: string;
+    createdAt: number;
+    updatedAt: number;
+    expiresAt: number;
+    status: GameStatus;
+    currentQuestionIndex: number;
+    questions: Question[];
+    players: Record<string, InternalPlayer>;
+};
+
+type SessionSnapshot = {
+    teacher: TeacherState;
+    screen: ScreenState;
+    players: Record<string, PlayerState>;
+};
+
+type SessionManagerOptions = {
+    initialQuestions?: Question[];
+    maxPlayersPerSession?: number;
+    sessionTtlMs?: number;
+    now?: () => number;
+    createCode?: () => string;
+    createPlayerId?: () => string;
+    createTeacherToken?: () => string;
+    createPlayerToken?: () => string;
+};
+
+type AuthTeacherResult = AckResponse<{ session: Session }>;
+type AuthPlayerResult = AckResponse<{ session: Session; player: InternalPlayer }>;
+
+const SESSION_CODE_RETRY_LIMIT = 20;
+const PLAYER_ID_RETRY_LIMIT = 20;
+
+export function createError(code: string, error: string): ErrorResponse {
     return { ok: false, code, error };
 }
 
 const UNAUTHORIZED_ERROR = () => createError("UNAUTHORIZED", "Authorization failed");
 
-function createOk(payload = {}) {
+function createOk<T extends object = object>(payload = {} as T): AckResponse<T> {
     return { ok: true, ...payload };
 }
 
-function randomColor() {
+function randomColor(): string {
     const colors = [
         "#ef4444",
         "#3b82f6",
@@ -34,64 +86,59 @@ function randomColor() {
         "#f43f5e",
         "#6366f1",
     ];
-    return colors[Math.floor(Math.random() * colors.length)];
+    return colors[Math.floor(Math.random() * colors.length)] ?? colors[0]!;
 }
 
-function clamp(value, min, max) {
+function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }
 
-function safePlayerName(name) {
+function safePlayerName(name: unknown): string {
     if (typeof name !== "string") return "Ойыншы";
     const trimmed = name.trim().slice(0, 24);
     return trimmed || "Ойыншы";
 }
 
-function calculatePoints({ isCorrect }) {
+function calculatePoints({ isCorrect }: { isCorrect: boolean }): number {
     return isCorrect ? 10 : 0;
 }
 
-function calculateProgressDelta({ isCorrect }) {
+function calculateProgressDelta({ isCorrect }: { isCorrect: boolean }): number {
     return isCorrect ? 10 : 0;
 }
 
-function getPublicQuestion(question) {
+function getPublicQuestion(question: Question | null | undefined): PublicQuestion | null {
     if (!question) return null;
 
+    const { correctIndex: _, ...publicQuestion } = question;
     return {
-        id: question.id,
-        type: question.type,
-        stem: question.stem,
-        passageTitle: question.passageTitle,
-        passage: question.passage,
-        image: question.image,
+        ...publicQuestion,
         options: question.options.map((option) => ({ ...option })),
-        groupId: question.groupId,
         sourceMeta: question.sourceMeta ? { ...question.sourceMeta } : null,
     };
 }
 
-function getTeacherQuestion(question) {
+function getTeacherQuestion(question: Question | null | undefined): TeacherQuestion | null {
     if (!question) return null;
 
     return {
-        ...getPublicQuestion(question),
+        ...getPublicQuestion(question)!,
         correctIndex: question.correctIndex,
     };
 }
 
-function normalizePlayers(playersMap) {
-    return Object.values(playersMap).sort((a, b) => {
+function normalizePlayers(playersMap: Record<string, InternalPlayer>): InternalPlayer[] {
+    return [...Object.values(playersMap)].sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
         return a.joinedAt - b.joinedAt;
     });
 }
 
-function countAnswered(playersMap) {
+function countAnswered(playersMap: Record<string, InternalPlayer>): number {
     return Object.values(playersMap).filter((player) => player.answeredCurrent).length;
 }
 
-function getTeacherControls(status) {
+function getTeacherControls(status: GameStatus) {
     return {
         canStart: status === GAME_STATUS.LOBBY,
         canShowResults: status === GAME_STATUS.QUESTION,
@@ -100,7 +147,7 @@ function getTeacherControls(status) {
     };
 }
 
-function serializePlayer(player) {
+function serializePlayer(player: InternalPlayer | null | undefined): Player | null {
     if (!player) return null;
 
     return {
@@ -117,7 +164,15 @@ function serializePlayer(player) {
     };
 }
 
-export function createSessionManager(options = {}) {
+function cloneQuestion(question: Question): Question {
+    return {
+        ...question,
+        options: question.options.map((option) => ({ ...option })),
+        sourceMeta: question.sourceMeta ? { ...question.sourceMeta } : null,
+    };
+}
+
+export function createSessionManager(options: SessionManagerOptions = {}) {
     const {
         initialQuestions = defaultQuestions,
         maxPlayersPerSession = 50,
@@ -129,25 +184,14 @@ export function createSessionManager(options = {}) {
         createPlayerToken = () => nanoid(24),
     } = options;
 
-    const sessions = Object.create(null);
+    const sessions: Record<string, Session> = Object.create(null);
 
-    function cloneQuestions() {
-        return initialQuestions.map((question) => ({
-            id: question.id,
-            type: question.type,
-            stem: question.stem,
-            passageTitle: question.passageTitle,
-            passage: question.passage,
-            image: question.image,
-            options: question.options.map((option) => ({ ...option })),
-            correctIndex: question.correctIndex,
-            groupId: question.groupId,
-            sourceMeta: question.sourceMeta ? { ...question.sourceMeta } : null,
-        }));
+    function cloneQuestions(): Question[] {
+        return initialQuestions.map(cloneQuestion);
     }
 
-    function getSession(code) {
-        const session = sessions[code] || null;
+    function getSession(code: string): Session | null {
+        const session = sessions[code] ?? null;
         if (!session) return null;
 
         if (session.expiresAt <= now()) {
@@ -158,12 +202,12 @@ export function createSessionManager(options = {}) {
         return session;
     }
 
-    function touchSession(session) {
+    function touchSession(session: Session): void {
         session.updatedAt = now();
         session.expiresAt = session.updatedAt + sessionTtlMs;
     }
 
-    function resetPlayersForNewQuestion(session) {
+    function resetPlayersForNewQuestion(session: Session): void {
         for (const player of Object.values(session.players)) {
             player.answeredCurrent = false;
             player.selectedOption = null;
@@ -171,16 +215,16 @@ export function createSessionManager(options = {}) {
         }
     }
 
-    function isSessionFinished(session) {
+    function isSessionFinished(session: Session): boolean {
         return session.currentQuestionIndex >= session.questions.length;
     }
 
-    function buildStateForTeacher(session) {
-        const currentQuestion = session.questions[session.currentQuestionIndex] || null;
-        const players = normalizePlayers(session.players).map(serializePlayer);
+    function buildStateForTeacher(session: Session): TeacherState {
+        const currentQuestion = session.questions[session.currentQuestionIndex] ?? null;
+        const players = normalizePlayers(session.players).map((player) => serializePlayer(player)!);
 
         const optionStats = currentQuestion
-            ? currentQuestion.options.map((optionText, index) => {
+            ? currentQuestion.options.map((option, index) => {
                 let count = 0;
                 for (const player of players) {
                     if (player.selectedOption === index) count += 1;
@@ -188,7 +232,7 @@ export function createSessionManager(options = {}) {
 
                 return {
                     index,
-                    option: { ...optionText },
+                    option: { ...option },
                     count,
                     isCorrect: currentQuestion.correctIndex === index,
                 };
@@ -210,9 +254,9 @@ export function createSessionManager(options = {}) {
         };
     }
 
-    function buildStateForPlayer(session, playerId) {
-        const currentQuestion = session.questions[session.currentQuestionIndex] || null;
-        const player = session.players[playerId] || null;
+    function buildStateForPlayer(session: Session, playerId: string): PlayerState {
+        const currentQuestion = session.questions[session.currentQuestionIndex] ?? null;
+        const player = session.players[playerId] ?? null;
 
         return {
             role: "player",
@@ -225,8 +269,8 @@ export function createSessionManager(options = {}) {
         };
     }
 
-    function buildStateForScreen(session) {
-        const currentQuestion = session.questions[session.currentQuestionIndex] || null;
+    function buildStateForScreen(session: Session): ScreenState {
+        const currentQuestion = session.questions[session.currentQuestionIndex] ?? null;
 
         return {
             role: "screen",
@@ -238,34 +282,45 @@ export function createSessionManager(options = {}) {
                 session.status === GAME_STATUS.QUESTION || session.status === GAME_STATUS.RESULT
                     ? getPublicQuestion(currentQuestion)
                     : null,
-            players: normalizePlayers(session.players).map(serializePlayer),
+            players: normalizePlayers(session.players).map((player) => serializePlayer(player)!),
             answeredCount: countAnswered(session.players),
             totalPlayers: Object.keys(session.players).length,
         };
     }
 
-    function createSession() {
-        const code = createCode();
-        const timestamp = now();
+    function createSession(): AckResponse<{ code: string; teacherToken: string; session: Session }> {
+        let code = "";
+        for (let attempt = 0; attempt < SESSION_CODE_RETRY_LIMIT; attempt += 1) {
+            const candidate = createCode();
+            if (!sessions[candidate]) {
+                code = candidate;
+                break;
+            }
+        }
 
-        sessions[code] = {
+        if (!code) {
+            return createError("SESSION_CODE_COLLISION", "Failed to allocate a unique session code");
+        }
+
+        const timestamp = now();
+        const session: Session = {
             code,
             teacherToken: createTeacherToken(),
             createdAt: timestamp,
             updatedAt: timestamp,
             expiresAt: timestamp + sessionTtlMs,
             status: GAME_STATUS.LOBBY,
-            teacherSocketId: null,
-            screenSocketId: null,
             currentQuestionIndex: 0,
             questions: cloneQuestions(),
-            players: Object.create(null),
+            players: Object.create(null) as Record<string, InternalPlayer>,
         };
 
-        return createOk({ code, teacherToken: sessions[code].teacherToken, session: sessions[code] });
+        sessions[code] = session;
+
+        return createOk({ code, teacherToken: session.teacherToken, session });
     }
 
-    function authorizeTeacher(code, teacherToken) {
+    function authorizeTeacher(code: string, teacherToken: string): AuthTeacherResult {
         const session = getSession(code);
         if (!session) {
             return createError("SESSION_NOT_FOUND", "Session not found");
@@ -278,30 +333,35 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function attachTeacher({ code, socketId, teacherToken }) {
+    function attachTeacher({ code, teacherToken }: { code: string; teacherToken: string }): AuthTeacherResult {
         const authResult = authorizeTeacher(code, teacherToken);
         if (!authResult.ok) {
             return authResult;
         }
 
-        const { session } = authResult;
-        session.teacherSocketId = socketId;
-        touchSession(session);
-        return createOk({ session });
+        touchSession(authResult.session);
+        return authResult;
     }
 
-    function attachScreen(code, socketId) {
+    function attachScreen(code: string): AuthTeacherResult {
         const session = getSession(code);
         if (!session) {
             return createError("SESSION_NOT_FOUND", "Session not found");
         }
 
-        session.screenSocketId = socketId;
         touchSession(session);
         return createOk({ session });
     }
 
-    function joinPlayer({ code, name, socketId }) {
+    function joinPlayer({
+        code,
+        name,
+        socketId,
+    }: {
+        code: string;
+        name: unknown;
+        socketId: string;
+    }): AckResponse<{ playerId: string; playerToken: string; session: Session }> {
         const session = getSession(code);
         if (!session) {
             return createError("SESSION_NOT_FOUND", "Session not found");
@@ -312,7 +372,19 @@ export function createSessionManager(options = {}) {
             return createError("SESSION_FULL", "Session is full");
         }
 
-        const playerId = createPlayerId();
+        let playerId = "";
+        for (let attempt = 0; attempt < PLAYER_ID_RETRY_LIMIT; attempt += 1) {
+            const candidate = createPlayerId();
+            if (!session.players[candidate]) {
+                playerId = candidate;
+                break;
+            }
+        }
+
+        if (!playerId) {
+            return createError("PLAYER_ID_COLLISION", "Failed to allocate a unique player id");
+        }
+
         const playerToken = createPlayerToken();
         session.players[playerId] = {
             id: playerId,
@@ -333,7 +405,7 @@ export function createSessionManager(options = {}) {
         return createOk({ playerId, playerToken, session });
     }
 
-    function authorizePlayer(code, playerId, playerToken) {
+    function authorizePlayer(code: string, playerId: string, playerToken: string): AuthPlayerResult {
         const session = getSession(code);
         if (!session) {
             return createError("SESSION_NOT_FOUND", "Session not found");
@@ -351,7 +423,17 @@ export function createSessionManager(options = {}) {
         return createOk({ session, player });
     }
 
-    function rejoinPlayer({ code, playerId, playerToken, socketId }) {
+    function rejoinPlayer({
+        code,
+        playerId,
+        playerToken,
+        socketId,
+    }: {
+        code: string;
+        playerId: string;
+        playerToken: string;
+        socketId: string;
+    }): AckResponse<{ playerId: string; session: Session; playerState: PlayerState }> {
         const authResult = authorizePlayer(code, playerId, playerToken);
         if (!authResult.ok) {
             return authResult;
@@ -365,7 +447,13 @@ export function createSessionManager(options = {}) {
         return createOk({ playerId, session, playerState: buildStateForPlayer(session, playerId) });
     }
 
-    function startQuestion({ code, teacherToken }) {
+    function startQuestion({
+        code,
+        teacherToken,
+    }: {
+        code: string;
+        teacherToken: string;
+    }): AckResponse<{ session: Session }> {
         const authResult = authorizeTeacher(code, teacherToken);
         if (!authResult.ok) {
             return authResult;
@@ -390,7 +478,23 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function submitAnswer({ code, playerId, playerToken, optionIndex }) {
+    function submitAnswer({
+        code,
+        playerId,
+        playerToken,
+        optionIndex,
+    }: {
+        code: string;
+        playerId: string;
+        playerToken: string;
+        optionIndex: unknown;
+    }): AckResponse<{
+        isCorrect: boolean;
+        points: number;
+        totalScore: number;
+        progress: number;
+        session: Session;
+    }> {
         const authResult = authorizePlayer(code, playerId, playerToken);
         if (!authResult.ok) {
             return authResult;
@@ -413,7 +517,7 @@ export function createSessionManager(options = {}) {
 
         const normalizedOptionIndex = Number(optionIndex);
         if (
-            Number.isNaN(normalizedOptionIndex) ||
+            !Number.isInteger(normalizedOptionIndex) ||
             normalizedOptionIndex < 0 ||
             normalizedOptionIndex >= question.options.length
         ) {
@@ -440,7 +544,13 @@ export function createSessionManager(options = {}) {
         });
     }
 
-    function showResults({ code, teacherToken }) {
+    function showResults({
+        code,
+        teacherToken,
+    }: {
+        code: string;
+        teacherToken: string;
+    }): AckResponse<{ session: Session }> {
         const authResult = authorizeTeacher(code, teacherToken);
         if (!authResult.ok) {
             return authResult;
@@ -457,7 +567,13 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function nextQuestion({ code, teacherToken }) {
+    function nextQuestion({
+        code,
+        teacherToken,
+    }: {
+        code: string;
+        teacherToken: string;
+    }): AckResponse<{ finished: boolean; session: Session }> {
         const authResult = authorizeTeacher(code, teacherToken);
         if (!authResult.ok) {
             return authResult;
@@ -484,7 +600,13 @@ export function createSessionManager(options = {}) {
         return createOk({ finished: false, session });
     }
 
-    function resetGame({ code, teacherToken }) {
+    function resetGame({
+        code,
+        teacherToken,
+    }: {
+        code: string;
+        teacherToken: string;
+    }): AckResponse<{ session: Session }> {
         const authResult = authorizeTeacher(code, teacherToken);
         if (!authResult.ok) {
             return authResult;
@@ -507,7 +629,13 @@ export function createSessionManager(options = {}) {
         return createOk({ session });
     }
 
-    function getTeacherState({ code, teacherToken }) {
+    function getTeacherState({
+        code,
+        teacherToken,
+    }: {
+        code: string;
+        teacherToken: string;
+    }): AckResponse<{ state: TeacherState; session: Session }> {
         const authResult = authorizeTeacher(code, teacherToken);
         if (!authResult.ok) {
             return authResult;
@@ -516,27 +644,28 @@ export function createSessionManager(options = {}) {
         return createOk({ state: buildStateForTeacher(authResult.session), session: authResult.session });
     }
 
-    function markDisconnected({ code, role, playerId }) {
+    function markDisconnected({
+        code,
+        role,
+        playerId,
+    }: {
+        code?: string | undefined;
+        role?: string | undefined;
+        playerId?: string | undefined;
+    }): void {
+        if (!code) return;
+
         const session = getSession(code);
         if (!session) return;
 
         if (role === "player" && playerId && session.players[playerId]) {
             session.players[playerId].connected = false;
             session.players[playerId].socketId = null;
+            touchSession(session);
         }
-
-        if (role === "teacher") {
-            session.teacherSocketId = null;
-        }
-
-        if (role === "screen") {
-            session.screenSocketId = null;
-        }
-
-        touchSession(session);
     }
 
-    function cleanupExpiredSessions() {
+    function cleanupExpiredSessions(): number {
         const currentTime = now();
         let removedCount = 0;
 
@@ -550,17 +679,17 @@ export function createSessionManager(options = {}) {
         return removedCount;
     }
 
-    function snapshot(code) {
+    function snapshot(code: string): SessionSnapshot | null {
         const session = getSession(code);
         if (!session) return null;
 
         return {
             teacher: buildStateForTeacher(session),
             screen: buildStateForScreen(session),
-            players: Object.values(session.players).reduce((acc, player) => {
+            players: Object.values(session.players).reduce<Record<string, PlayerState>>((acc, player) => {
                 acc[player.id] = buildStateForPlayer(session, player.id);
                 return acc;
-            }, Object.create(null)),
+            }, Object.create(null) as Record<string, PlayerState>),
         };
     }
 
@@ -586,3 +715,5 @@ export function createSessionManager(options = {}) {
         snapshot,
     };
 }
+
+export type SessionManager = ReturnType<typeof createSessionManager>;

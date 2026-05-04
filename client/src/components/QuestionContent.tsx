@@ -1,15 +1,22 @@
-function getOptionLetter(index, option) {
-    return option?.label || String.fromCharCode(65 + index);
+import { createElement, type ReactNode } from "react";
+
+import type { PublicQuestion, QuestionOption, TeacherQuestion } from "../../../shared/types";
+
+type QuestionLike = PublicQuestion | TeacherQuestion;
+type HeadingTag = "h2" | "h3";
+
+function getOptionLetter(index: number, option: QuestionOption): string {
+    return option.label || String.fromCharCode(65 + index);
 }
 
-export function QuestionOptionContent({ option, index }) {
+export function QuestionOptionContent({ option, index }: { option: QuestionOption; index: number }) {
     const label = getOptionLetter(index, option);
 
     return (
         <div className="option-body">
             <span className="option-letter">{label}</span>
             <div className="option-stack">
-                {option?.image ? (
+                {option.image ? (
                     <img
                         className="question-option-image"
                         src={option.image}
@@ -17,13 +24,25 @@ export function QuestionOptionContent({ option, index }) {
                         loading="lazy"
                     />
                 ) : null}
-                {option?.text ? <div className="option-text">{option.text}</div> : null}
+                {option.text ? <div className="option-text">{option.text}</div> : null}
             </div>
         </div>
     );
 }
 
-export function QuestionContent({ question, badge, titleTag: TitleTag = "h2", titleClassName = "question-title", children }) {
+export function QuestionContent({
+    question,
+    badge,
+    titleTag: TitleTag = "h2",
+    titleClassName = "question-title",
+    children,
+}: {
+    question: QuestionLike | null;
+    badge?: string;
+    titleTag?: HeadingTag;
+    titleClassName?: string;
+    children?: ReactNode;
+}) {
     if (!question) return null;
 
     const titleNode = question.stem
@@ -65,4 +84,3 @@ export function QuestionContent({ question, badge, titleTag: TitleTag = "h2", ti
         </div>
     );
 }
-import { createElement } from "react";
