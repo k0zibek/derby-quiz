@@ -2,12 +2,13 @@ import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import fs from "node:fs";
+import { nanoid } from "nanoid";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Server } from "socket.io";
 
-import type { ClientToServerEvents, ErrorResponse, ServerToClientEvents } from "../shared/types.js";
+import type { ClientToServerEvents, ErrorResponse, QuestionSet, QuestionSetDraft, ServerToClientEvents } from "../shared/types.js";
 import { buildClassroomInfo, printClassroomInfo } from "./classroom.js";
 import type { AppConfig } from "./config.js";
 import { loadConfig } from "./config.js";
@@ -16,12 +17,18 @@ import type { ClassroomRepository } from "./db/repository.js";
 import { ClassroomRepository as Repository } from "./db/repository.js";
 import type { SessionManager } from "./game.js";
 import { createSessionManager } from "./game.js";
+import { normalizeTextQuestionDraft } from "./questions.js";
 import {
+    addSessionQuestionPayloadSchema,
     formatPayloadError,
     playerJoinPayloadSchema,
     playerRejoinPayloadSchema,
+    questionSetCreatePayloadSchema,
+    questionSetDeletePayloadSchema,
+    questionSetUpdatePayloadSchema,
     screenJoinPayloadSchema,
     submitAnswerPayloadSchema,
+    teacherAccessPayloadSchema,
     teacherCreateSessionPayloadSchema,
     teacherSessionPayloadSchema,
 } from "./validation.js";
@@ -58,6 +65,31 @@ function rateLimitedError(): ErrorResponse {
         ok: false,
         code: "RATE_LIMITED",
         error: "Too many requests. Please try again shortly.",
+    };
+}
+
+function storageUnavailableError(): ErrorResponse {
+    return {
+        ok: false,
+        code: "STORAGE_UNAVAILABLE",
+        error: "Question library storage is unavailable",
+    };
+}
+
+function createQuestionSetFromDraft(
+    draft: QuestionSetDraft,
+    options: { id?: string; createdAt?: number } = {}
+): QuestionSet {
+    const timestamp = Date.now();
+
+    return {
+        id: options.id ?? draft.id ?? nanoid(12),
+        title: draft.title,
+        questions: draft.questions.map((question, index) =>
+            normalizeTextQuestionDraft(question, index, { createId: () => nanoid(10) })
+        ),
+        createdAt: options.createdAt ?? timestamp,
+        updatedAt: timestamp,
     };
 }
 
@@ -189,6 +221,199 @@ export async function createAppServer(options: CreateAppServerOptions = {}) {
             return bucket.count > limit;
         }
 
+        socket.on("questionSet:list", (rawPayload, callback) => {
+            try {
+                if (isRateLimited("questionSet:list", RATE_LIMITS.teacherAction)) {
+                    callback?.(rateLimitedError());
+                    return;
+                }
+
+                const payload = teacherAccessPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const accessResult = validateTeacherAccessPin(payload.data.accessPin);
+                if (!accessResult.ok) {
+                    callback?.(accessResult);
+                    return;
+                }
+
+                callback?.({ ok: true, questionSets: repository?.listQuestionSets() ?? [] });
+            } catch (error) {
+                console.error("questionSet:list error:", error);
+                callback?.({
+                    ok: false,
+                    code: "INTERNAL_ERROR",
+                    error: "Failed to list question sets",
+                });
+            }
+        });
+
+        socket.on("questionSet:create", (rawPayload, callback) => {
+            try {
+                if (isRateLimited("questionSet:create", RATE_LIMITS.teacherAction)) {
+                    callback?.(rateLimitedError());
+                    return;
+                }
+
+                const payload = questionSetCreatePayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const accessResult = validateTeacherAccessPin(payload.data.accessPin);
+                if (!accessResult.ok) {
+                    callback?.(accessResult);
+                    return;
+                }
+
+                if (!repository) {
+                    callback?.(storageUnavailableError());
+                    return;
+                }
+
+                const questionSet = createQuestionSetFromDraft(payload.data.questionSet);
+                repository.saveQuestionSet(questionSet);
+                callback?.({ ok: true, questionSet });
+            } catch (error) {
+                console.error("questionSet:create error:", error);
+                callback?.({
+                    ok: false,
+                    code: "INTERNAL_ERROR",
+                    error: "Failed to create question set",
+                });
+            }
+        });
+
+        socket.on("questionSet:get", (rawPayload, callback) => {
+            try {
+                if (isRateLimited("questionSet:get", RATE_LIMITS.teacherAction)) {
+                    callback?.(rateLimitedError());
+                    return;
+                }
+
+                const payload = questionSetDeletePayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const accessResult = validateTeacherAccessPin(payload.data.accessPin);
+                if (!accessResult.ok) {
+                    callback?.(accessResult);
+                    return;
+                }
+
+                const questionSet = repository?.getQuestionSet(payload.data.questionSetId) ?? null;
+                if (!questionSet) {
+                    callback?.({
+                        ok: false,
+                        code: "QUESTION_SET_NOT_FOUND",
+                        error: "Question set not found",
+                    });
+                    return;
+                }
+
+                callback?.({ ok: true, questionSet });
+            } catch (error) {
+                console.error("questionSet:get error:", error);
+                callback?.({
+                    ok: false,
+                    code: "INTERNAL_ERROR",
+                    error: "Failed to load question set",
+                });
+            }
+        });
+
+        socket.on("questionSet:update", (rawPayload, callback) => {
+            try {
+                if (isRateLimited("questionSet:update", RATE_LIMITS.teacherAction)) {
+                    callback?.(rateLimitedError());
+                    return;
+                }
+
+                const payload = questionSetUpdatePayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const accessResult = validateTeacherAccessPin(payload.data.accessPin);
+                if (!accessResult.ok) {
+                    callback?.(accessResult);
+                    return;
+                }
+
+                if (!repository) {
+                    callback?.(storageUnavailableError());
+                    return;
+                }
+
+                const existing = repository.getQuestionSet(payload.data.questionSetId);
+                if (!existing) {
+                    callback?.({
+                        ok: false,
+                        code: "QUESTION_SET_NOT_FOUND",
+                        error: "Question set not found",
+                    });
+                    return;
+                }
+
+                const questionSet = createQuestionSetFromDraft(payload.data.questionSet, {
+                    id: existing.id,
+                    createdAt: existing.createdAt,
+                });
+                repository.saveQuestionSet(questionSet);
+                callback?.({ ok: true, questionSet });
+            } catch (error) {
+                console.error("questionSet:update error:", error);
+                callback?.({
+                    ok: false,
+                    code: "INTERNAL_ERROR",
+                    error: "Failed to update question set",
+                });
+            }
+        });
+
+        socket.on("questionSet:delete", (rawPayload, callback) => {
+            try {
+                if (isRateLimited("questionSet:delete", RATE_LIMITS.teacherAction)) {
+                    callback?.(rateLimitedError());
+                    return;
+                }
+
+                const payload = questionSetDeletePayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const accessResult = validateTeacherAccessPin(payload.data.accessPin);
+                if (!accessResult.ok) {
+                    callback?.(accessResult);
+                    return;
+                }
+
+                if (!repository) {
+                    callback?.(storageUnavailableError());
+                    return;
+                }
+
+                repository.deleteQuestionSet(payload.data.questionSetId);
+                callback?.({ ok: true });
+            } catch (error) {
+                console.error("questionSet:delete error:", error);
+                callback?.({
+                    ok: false,
+                    code: "INTERNAL_ERROR",
+                    error: "Failed to delete question set",
+                });
+            }
+        });
+
         socket.on("teacher:createSession", (rawPayload, callback) => {
             try {
                 if (isRateLimited("teacher:createSession", RATE_LIMITS.teacherCreateSession)) {
@@ -208,7 +433,17 @@ export async function createAppServer(options: CreateAppServerOptions = {}) {
                     return;
                 }
 
-                const result = sessionManager.createSession();
+                const questionSet = repository?.getQuestionSet(payload.data.questionSetId) ?? null;
+                if (!questionSet) {
+                    callback?.({
+                        ok: false,
+                        code: "QUESTION_SET_NOT_FOUND",
+                        error: "Question set not found",
+                    });
+                    return;
+                }
+
+                const result = sessionManager.createSession({ questions: questionSet.questions });
                 if (!result.ok) {
                     callback?.(result);
                     return;
@@ -546,6 +781,42 @@ export async function createAppServer(options: CreateAppServerOptions = {}) {
                     ok: false,
                     code: "INTERNAL_ERROR",
                     error: "Failed to reset game",
+                });
+            }
+        });
+
+        socket.on("session:addQuestion", (rawPayload, callback) => {
+            try {
+                if (isRateLimited("session:addQuestion", RATE_LIMITS.teacherAction)) {
+                    callback?.(rateLimitedError());
+                    return;
+                }
+
+                const payload = addSessionQuestionPayloadSchema.safeParse(rawPayload);
+                if (!payload.success) {
+                    callback?.(formatPayloadError());
+                    return;
+                }
+
+                const question = normalizeTextQuestionDraft(payload.data.question, 0, {
+                    createId: () => nanoid(10),
+                });
+                const result = sessionManager.addQuestion({
+                    code: payload.data.code,
+                    teacherToken: payload.data.teacherToken,
+                    question,
+                });
+                callback?.(result.ok ? { ok: true } : result);
+                if (result.ok) {
+                    persistSession(sessionManager, repository, payload.data.code);
+                    emitAllState(payload.data.code);
+                }
+            } catch (error) {
+                console.error("session:addQuestion error:", error);
+                callback?.({
+                    ok: false,
+                    code: "INTERNAL_ERROR",
+                    error: "Failed to add question",
                 });
             }
         });

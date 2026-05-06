@@ -61,6 +61,25 @@ test("session manager creates session and exposes teacher controls", () => {
     assert.equal(teacherState.state.canGoNext, false);
 });
 
+test("session manager snapshots questions when creating a session", () => {
+    const mutableQuestions = structuredClone(sampleQuestions);
+    const manager = createSessionManager({
+        createCode: () => "COPY01",
+        createTeacherToken: () => "teacher-token",
+    });
+
+    const created = manager.createSession({ questions: mutableQuestions });
+    assert.equal(created.ok, true);
+    assert.ok(created.ok);
+
+    mutableQuestions[0]!.stem = "Changed outside session";
+    mutableQuestions[0]!.options[0]!.text = "Changed option";
+
+    const session = manager.getSession("COPY01");
+    assert.equal(session?.questions[0]?.stem, "2 + 2");
+    assert.equal(session?.questions[0]?.options[0]?.text, "3");
+});
+
 test("session manager rejects invalid state transitions", () => {
     const manager = createSessionManager({
         initialQuestions: sampleQuestions,

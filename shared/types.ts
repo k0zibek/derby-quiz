@@ -79,6 +79,27 @@ export type QuestionSet = {
   updatedAt: number;
 };
 
+export type QuestionSetSummary = {
+  id: string;
+  title: string;
+  questionCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type TextQuestionDraft = {
+  id?: string | undefined;
+  stem: string;
+  options: string[];
+  correctIndex: number;
+};
+
+export type QuestionSetDraft = {
+  id?: string | undefined;
+  title: string;
+  questions: TextQuestionDraft[];
+};
+
 export type RuntimeSessionSnapshot = PersistedSession;
 
 export type TeacherState = {
@@ -140,6 +161,14 @@ export type TeacherCreateSessionAck = AckResponse<{
   teacherToken: string;
 }>;
 
+export type QuestionSetListAck = AckResponse<{
+  questionSets: QuestionSetSummary[];
+}>;
+
+export type QuestionSetAck = AckResponse<{
+  questionSet: QuestionSet;
+}>;
+
 export type PlayerJoinAck = AckResponse<{
   playerId: string;
   playerToken: string;
@@ -165,8 +194,28 @@ export type SimpleAck = AckResponse;
 
 export type ClientToServerEvents = {
   "teacher:createSession": (
-    payload: { accessPin?: string },
+    payload: { accessPin?: string; questionSetId?: string },
     callback?: (response: TeacherCreateSessionAck) => void
+  ) => void;
+  "questionSet:list": (
+    payload: { accessPin?: string },
+    callback?: (response: QuestionSetListAck) => void
+  ) => void;
+  "questionSet:create": (
+    payload: { accessPin?: string; questionSet: QuestionSetDraft },
+    callback?: (response: QuestionSetAck) => void
+  ) => void;
+  "questionSet:get": (
+    payload: { accessPin?: string; questionSetId: string },
+    callback?: (response: QuestionSetAck) => void
+  ) => void;
+  "questionSet:update": (
+    payload: { accessPin?: string; questionSetId: string; questionSet: QuestionSetDraft },
+    callback?: (response: QuestionSetAck) => void
+  ) => void;
+  "questionSet:delete": (
+    payload: { accessPin?: string; questionSetId: string },
+    callback?: (response: SimpleAck) => void
   ) => void;
   "teacher:joinSession": (
     payload: { code: string; teacherToken: string },
@@ -199,6 +248,10 @@ export type ClientToServerEvents = {
   ) => void;
   "teacher:resetGame": (
     payload: { code: string; teacherToken: string },
+    callback?: (response: SimpleAck) => void
+  ) => void;
+  "session:addQuestion": (
+    payload: { code: string; teacherToken: string; question: TextQuestionDraft },
     callback?: (response: SimpleAck) => void
   ) => void;
 };

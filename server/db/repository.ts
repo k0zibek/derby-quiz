@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
-import type { AnswerRecord, PersistedSession, QuestionSet } from "../../shared/types.js";
+import type { AnswerRecord, PersistedSession, QuestionSet, QuestionSetSummary } from "../../shared/types.js";
 import type { ClassroomDatabase } from "./database.js";
 import { answers, players, questionSets, sessions, settings } from "./schema.js";
 
@@ -92,6 +92,43 @@ export class ClassroomRepository {
         return record;
     }
 
+    listQuestionSets(): QuestionSetSummary[] {
+        return this.database.db
+            .select()
+            .from(questionSets)
+            .all()
+            .map((row) => {
+                const questions = JSON.parse(row.questionsJson) as QuestionSet["questions"];
+
+                return {
+                    id: row.id,
+                    title: row.title,
+                    questionCount: questions.length,
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt,
+                };
+            })
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
+    getQuestionSet(id: string): QuestionSet | null {
+        const row = this.database.db
+            .select()
+            .from(questionSets)
+            .where(eq(questionSets.id, id))
+            .get();
+
+        if (!row) return null;
+
+        return {
+            id: row.id,
+            title: row.title,
+            questions: JSON.parse(row.questionsJson) as QuestionSet["questions"],
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+        };
+    }
+
     saveQuestionSet(questionSet: QuestionSet): void {
         this.database.db
             .insert(questionSets)
@@ -111,6 +148,10 @@ export class ClassroomRepository {
                 },
             })
             .run();
+    }
+
+    deleteQuestionSet(id: string): void {
+        this.database.db.delete(questionSets).where(eq(questionSets.id, id)).run();
     }
 
     setSetting(key: string, value: unknown): void {

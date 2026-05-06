@@ -7,7 +7,7 @@
 
 Текущая версия игры:
 - весь интерфейс переведён на казахский язык
-- вопросы хранятся в [`questions.json`](./questions.json)
+- вопросы создаются учителем и хранятся в SQLite-библиотеке наборов
 - поддерживаются длинные тексты для оқу сауаттылығы
 - поддерживаются изображения в самих вопросах и в вариантах ответа
 - `teacher` защищён PIN-кодом доступа
@@ -17,15 +17,15 @@
 - `server`: Fastify + TypeScript + Socket.IO server
 - `storage`: local SQLite через Drizzle/better-sqlite3
 - `shared`: type-only контракты для вопросов, session state и Socket.IO events
-- `questions.json`: нормализованный набор rich-вопросов для runtime
 
 ## Что уже есть
 - вход игроков по коду игры
 - восстановление игрока после refresh через `localStorage`
 - восстановление активных сессий из SQLite после рестарта сервера
 - state machine игры: `lobby -> question -> result -> lobby|finished`
-- единый источник вопросов в [`questions.json`](./questions.json)
-- серверная валидация rich-question schema в [`server/questions.ts`](./server/questions.ts)
+- библиотека наборов вопросов в SQLite
+- серверная валидация rich-question и text-MCQ schema в [`server/questions.ts`](./server/questions.ts)
+- Adaptive Queue: учитель может добавить быстрый повторный вопрос в текущую очередь после результатов
 - runtime validation env/socket payloads через Zod
 - TTL cleanup для старых сессий
 - health/readiness/classroom endpoints: `/health`, `/ready`, `/classroom-info`
@@ -45,8 +45,7 @@
 - [`server/db`](./server/db) - SQLite schema и repository
 - [`server/validation.ts`](./server/validation.ts) - Zod schemas для socket payloads
 - [`server/config.ts`](./server/config.ts) - env-конфиг
-- [`server/questions.ts`](./server/questions.ts) - загрузка и валидация вопросов
-- [`questions.json`](./questions.json) - runtime-набор вопросов
+- [`server/questions.ts`](./server/questions.ts) - нормализация и валидация вопросов
 - [`package.json`](./package.json) - корневые команды проекта
 
 ## Запуск локально
@@ -108,7 +107,14 @@ VITE_SERVER_URL=http://localhost:4000 npm --workspace client run dev
 
 ## Контент
 
-Рабочий источник вопросов: [`questions.json`](./questions.json)
+Рабочий источник вопросов — SQLite-таблица `question_sets`. Учитель создаёт наборы после входа по PIN-коду на странице `/teacher`, выбирает набор и запускает игру из него.
+
+В первой версии редактор поддерживает текстовые multiple-choice вопросы:
+- текст вопроса
+- 2-6 текстовых вариантов ответа
+- один правильный вариант
+
+Активная сессия получает копию выбранного набора. Если позже изменить набор в библиотеке, уже запущенная игра не меняется.
 
 ## Формат вопроса
 Каждый вопрос содержит:
@@ -122,6 +128,8 @@ VITE_SERVER_URL=http://localhost:4000 npm --workspace client run dev
 - `correctIndex`
 - `groupId`
 - `sourceMeta`
+
+Вопросы, созданные через текущий UI-редактор, сохраняются как `mcq`, а rich-поля (`passageTitle`, `passage`, `image`, `groupId`, `sourceMeta`) заполняются `null`.
 
 ## Переменные окружения сервера
 - `PORT` — порт сервера, по умолчанию `4000`

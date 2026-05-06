@@ -14,7 +14,6 @@ import type {
     TeacherQuestion,
     TeacherState,
 } from "../shared/types.js";
-import { questions as defaultQuestions } from "./questions.js";
 
 export const GAME_STATUS = {
     LOBBY: "lobby",
@@ -176,7 +175,7 @@ function cloneQuestion(question: Question): Question {
 
 export function createSessionManager(options: SessionManagerOptions = {}) {
     const {
-        initialQuestions = defaultQuestions,
+        initialQuestions = [],
         initialSessions = [],
         maxPlayersPerSession = 50,
         sessionTtlMs = 1000 * 60 * 60 * 4,
@@ -206,8 +205,8 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
         };
     }
 
-    function cloneQuestions(): Question[] {
-        return initialQuestions.map(cloneQuestion);
+    function cloneQuestions(questions: Question[]): Question[] {
+        return questions.map(cloneQuestion);
     }
 
     function toPersistedSession(session: Session): PersistedSession {
@@ -337,7 +336,14 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
         };
     }
 
-    function createSession(): AckResponse<{ code: string; teacherToken: string; session: Session }> {
+    function createSession(
+        payload: { questions?: Question[] } = {}
+    ): AckResponse<{ code: string; teacherToken: string; session: Session }> {
+        const sessionQuestions = payload.questions ?? initialQuestions;
+        if (!Array.isArray(sessionQuestions) || sessionQuestions.length === 0) {
+            return createError("QUESTION_SET_EMPTY", "Question set must contain at least one question");
+        }
+
         let code = "";
         for (let attempt = 0; attempt < SESSION_CODE_RETRY_LIMIT; attempt += 1) {
             const candidate = createCode();
@@ -360,7 +366,7 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
             expiresAt: timestamp + sessionTtlMs,
             status: GAME_STATUS.LOBBY,
             currentQuestionIndex: 0,
-            questions: cloneQuestions(),
+            questions: cloneQuestions(sessionQuestions),
             players: Object.create(null) as Record<string, InternalPlayer>,
         };
 
@@ -378,6 +384,34 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
         if (session.teacherToken !== teacherToken) {
             return UNAUTHORIZED_ERROR();
         }
+
+        return createOk({ session });
+    }
+
+    function addQuestion({
+        code,
+        teacherToken,
+        question,
+    }: {
+        code: string;
+        teacherToken: string;
+        question: Question;
+    }): AckResponse<{ session: Session }> {
+        const authResult = authorizeTeacher(code, teacherToken);
+        if (!authResult.ok) {
+            return authResult;
+        }
+
+        const { session } = authResult;
+        if (session.status !== GAME_STATUS.LOBBY && session.status !== GAME_STATUS.RESULT) {
+            return createError("INVALID_TRANSITION", "Questions can only be added from lobby or result");
+        }
+
+        const insertIndex = session.status === GAME_STATUS.RESULT
+            ? session.currentQuestionIndex + 1
+            : session.questions.length;
+        session.questions.splice(insertIndex, 0, cloneQuestion(question));
+        touchSession(session);
 
         return createOk({ session });
     }
@@ -758,6 +792,7 @@ export function createSessionManager(options: SessionManagerOptions = {}) {
         showResults,
         nextQuestion,
         resetGame,
+        addQuestion,
         getTeacherState,
         markDisconnected,
         cleanupExpiredSessions,

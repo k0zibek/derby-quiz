@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type {
     ConnectionState,
     PlayerState,
+    TextQuestionDraft,
     ScreenState,
     SessionState,
     TeacherState,
@@ -48,6 +49,7 @@ export function useTeacherActions(code: string, teacherToken: string) {
             showResults: () => sessionClient.showResults(code, teacherToken),
             nextQuestion: () => sessionClient.nextQuestion(code, teacherToken),
             resetGame: () => sessionClient.resetGame(code, teacherToken),
+            addQuestion: (question: TextQuestionDraft) => sessionClient.addQuestion(code, teacherToken, question),
         }),
         [code, teacherToken]
     );

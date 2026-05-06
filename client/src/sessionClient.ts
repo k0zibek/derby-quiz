@@ -3,6 +3,9 @@ import type {
     ConnectionState,
     ErrorResponse,
     NextQuestionAck,
+    QuestionSetAck,
+    QuestionSetDraft,
+    QuestionSetListAck,
     PlayerJoinAck,
     PlayerRejoinAck,
     SessionState,
@@ -142,8 +145,23 @@ export const sessionClient = {
     ensureConnected,
     subscribeToSessionState,
     subscribeToConnection,
-    createTeacherSession(accessPin: string) {
-        return emitWithAck<TeacherCreateSessionAck>("teacher:createSession", { accessPin });
+    listQuestionSets(accessPin: string) {
+        return emitWithAck<QuestionSetListAck>("questionSet:list", { accessPin });
+    },
+    createQuestionSet(accessPin: string, questionSet: QuestionSetDraft) {
+        return emitWithAck<QuestionSetAck>("questionSet:create", { accessPin, questionSet });
+    },
+    getQuestionSet(accessPin: string, questionSetId: string) {
+        return emitWithAck<QuestionSetAck>("questionSet:get", { accessPin, questionSetId });
+    },
+    updateQuestionSet(accessPin: string, questionSetId: string, questionSet: QuestionSetDraft) {
+        return emitWithAck<QuestionSetAck>("questionSet:update", { accessPin, questionSetId, questionSet });
+    },
+    deleteQuestionSet(accessPin: string, questionSetId: string) {
+        return emitWithAck<SimpleAck>("questionSet:delete", { accessPin, questionSetId });
+    },
+    createTeacherSession(accessPin: string, questionSetId: string) {
+        return emitWithAck<TeacherCreateSessionAck>("teacher:createSession", { accessPin, questionSetId });
     },
     joinTeacherSession(code: string, teacherToken: string) {
         return emitWithAck<SimpleAck>("teacher:joinSession", { code, teacherToken });
@@ -168,6 +186,9 @@ export const sessionClient = {
     },
     resetGame(code: string, teacherToken: string) {
         return emitWithAck<SimpleAck>("teacher:resetGame", { code, teacherToken });
+    },
+    addQuestion(code: string, teacherToken: string, question: QuestionSetDraft["questions"][number]) {
+        return emitWithAck<SimpleAck>("session:addQuestion", { code, teacherToken, question });
     },
     submitAnswer(code: string, playerId: string, playerToken: string, optionIndex: number) {
         return emitWithAck<SubmitAnswerAck>("player:submitAnswer", { code, playerId, playerToken, optionIndex });

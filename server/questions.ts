@@ -2,8 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { Question, QuestionOption, QuestionType, SourceMeta } from "../shared/types.js";
-import rawQuestions from "../questions.json" with { type: "json" };
+import type { Question, QuestionOption, QuestionType, SourceMeta, TextQuestionDraft } from "../shared/types.js";
 
 const VALID_TYPES = new Set<QuestionType>(["mcq", "reading_mcq", "image_mcq"]);
 const OPTION_LABELS = ["A", "B", "C", "D", "E", "F"] as const;
@@ -167,4 +166,52 @@ export function validateQuestionSet(
     return questionSet.map((question, index) => normalizeQuestion(question, index, options));
 }
 
-export const questions = validateQuestionSet(rawQuestions);
+export function normalizeTextQuestionDraft(
+    draft: TextQuestionDraft,
+    index: number,
+    options: { createId?: () => string } = {}
+): Question {
+    const id = normalizeText(draft.id) ?? options.createId?.() ?? `q${index + 1}`;
+    const stem = normalizeText(draft.stem);
+    if (!stem) {
+        throw new Error(`Question "${id}" must have either stem or image`);
+    }
+
+    if (!Array.isArray(draft.options) || draft.options.length < 2 || draft.options.length > 6) {
+        throw new Error(`Question "${id}" must have 2 to 6 options`);
+    }
+
+    const normalizedOptions = draft.options.map((option, optionIndex) => {
+        const text = normalizeText(option);
+        if (!text) {
+            throw new Error(`Question option #${optionIndex + 1} must not be empty`);
+        }
+
+        return {
+            label: OPTION_LABELS[optionIndex] ?? String(optionIndex + 1),
+            text,
+            image: null,
+        };
+    });
+
+    if (
+        !Number.isInteger(draft.correctIndex) ||
+        draft.correctIndex < 0 ||
+        draft.correctIndex >= normalizedOptions.length
+    ) {
+        throw new Error(`Question "${id}" has invalid correctIndex "${String(draft.correctIndex)}"`);
+    }
+
+    return {
+        id,
+        type: "mcq",
+        stem,
+        passageTitle: null,
+        passage: null,
+        image: null,
+        options: normalizedOptions,
+        correctIndex: draft.correctIndex,
+        groupId: null,
+        sourceMeta: null,
+    };
+}

@@ -95,3 +95,53 @@ test("repository records answer rows", () => {
         close();
     }
 });
+
+test("repository manages question sets", () => {
+    const { repository, close } = createTempRepository();
+
+    try {
+        const questionSet = {
+            id: "set-1",
+            title: "Warmup",
+            createdAt: 1000,
+            updatedAt: 1000,
+            questions: [
+                {
+                    id: "q1",
+                    type: "mcq" as const,
+                    stem: "2 + 2",
+                    passageTitle: null,
+                    passage: null,
+                    image: null,
+                    options: [
+                        { label: "A", text: "4", image: null },
+                        { label: "B", text: "5", image: null },
+                    ],
+                    correctIndex: 0,
+                    groupId: null,
+                    sourceMeta: null,
+                },
+            ],
+        };
+
+        repository.saveQuestionSet(questionSet);
+        assert.deepEqual(repository.getQuestionSet("set-1"), questionSet);
+
+        const summaries = repository.listQuestionSets();
+        assert.equal(summaries.length, 1);
+        assert.equal(summaries[0]!.id, "set-1");
+        assert.equal(summaries[0]!.questionCount, 1);
+
+        repository.saveQuestionSet({
+            ...questionSet,
+            title: "Updated warmup",
+            updatedAt: 2000,
+        });
+        assert.equal(repository.getQuestionSet("set-1")?.title, "Updated warmup");
+
+        repository.deleteQuestionSet("set-1");
+        assert.equal(repository.getQuestionSet("set-1"), null);
+    } finally {
+        close();
+    }
+});

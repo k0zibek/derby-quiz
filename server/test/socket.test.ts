@@ -7,7 +7,12 @@ import test from "node:test";
 
 import { io as createClient, type Socket as ClientSocket } from "socket.io-client";
 
-import type { ClientToServerEvents, ServerToClientEvents, SessionState } from "../../shared/types.js";
+import type {
+    ClientToServerEvents,
+    QuestionSetDraft,
+    ServerToClientEvents,
+    SessionState,
+} from "../../shared/types.js";
 import type { AppConfig } from "../config.js";
 import { createAppServer } from "../index.js";
 
@@ -62,10 +67,36 @@ function emitAck<T>(socket: TestSocket, eventName: string, payload: object): Pro
     });
 }
 
+const sampleQuestionSetDraft: QuestionSetDraft = {
+    title: "Math warmup",
+    questions: [
+        {
+            stem: "2 + 2",
+            options: ["4", "5"],
+            correctIndex: 0,
+        },
+        {
+            stem: "3 + 3",
+            options: ["6", "7"],
+            correctIndex: 0,
+        },
+    ],
+};
+
+async function createQuestionSet(socket: TestSocket) {
+    const created = await emitAck<{ ok: true; questionSet: { id: string } }>(
+        socket,
+        "questionSet:create",
+        { accessPin: "test-pin", questionSet: sampleQuestionSetDraft }
+    );
+
+    assert.equal(created.ok, true);
+    return created.questionSet.id;
+}
+
 test("socket flow covers teacher, players, results, and finish", async () => {
     const runtime = await createAppServer({
         config: testConfig(),
-        repository: null,
     });
 
     await runtime.listen("127.0.0.1");
@@ -88,15 +119,24 @@ test("socket flow covers teacher, players, results, and finish", async () => {
         const deniedTeacher = await emitAck<{ ok: false; code: string }>(
             teacher,
             "teacher:createSession",
-            { accessPin: "bad-pin" }
+            { accessPin: "bad-pin", questionSetId: "missing" }
         );
         assert.equal(deniedTeacher.ok, false);
         assert.equal(deniedTeacher.code, "TEACHER_ACCESS_DENIED");
 
+        const missingSet = await emitAck<{ ok: false; code: string }>(
+            teacher,
+            "teacher:createSession",
+            { accessPin: "test-pin", questionSetId: "missing" }
+        );
+        assert.equal(missingSet.ok, false);
+        assert.equal(missingSet.code, "QUESTION_SET_NOT_FOUND");
+
+        const questionSetId = await createQuestionSet(teacher);
         const teacherCreated = await emitAck<{ ok: true; code: string; teacherToken: string }>(
             teacher,
             "teacher:createSession",
-            { accessPin: "test-pin" }
+            { accessPin: "test-pin", questionSetId }
         );
         assert.equal(teacherCreated.ok, true);
 
@@ -155,6 +195,22 @@ test("socket flow covers teacher, players, results, and finish", async () => {
         ]);
         assert.equal(playerOneQuestion.status, "question");
 
+        const addDuringQuestion = await emitAck<{ ok: false; code: string }>(
+            teacher,
+            "session:addQuestion",
+            {
+                code,
+                teacherToken,
+                question: {
+                    stem: "Retry question",
+                    options: ["A", "B"],
+                    correctIndex: 0,
+                },
+            }
+        );
+        assert.equal(addDuringQuestion.ok, false);
+        assert.equal(addDuringQuestion.code, "INVALID_TRANSITION");
+
         const invalidOption = await emitAck<{ ok: false; code: string }>(
             playerTwo,
             "player:submitAnswer",
@@ -212,6 +268,28 @@ test("socket flow covers teacher, players, results, and finish", async () => {
         );
         assert.equal(showResults.ok, true);
 
+        const addedStatePromise = waitForState(
+            teacher,
+            (state) => state.role === "teacher" && state.totalQuestions === 3
+        );
+        const addAfterResults = await emitAck<{ ok: true }>(
+            teacher,
+            "session:addQuestion",
+            {
+                code,
+                teacherToken,
+                question: {
+                    stem: "Comeback",
+                    options: ["Дұрыс", "Қате"],
+                    correctIndex: 0,
+                },
+            }
+        );
+        assert.equal(addAfterResults.ok, true);
+        const addedState = await addedStatePromise;
+        assert.equal(addedState.role, "teacher");
+        assert.equal(addedState.totalQuestions, 3);
+
         const nextQuestion = await emitAck<{ ok: true; finished: boolean }>(
             teacher,
             "teacher:nextQuestion",
@@ -243,10 +321,11 @@ test("socket session can be restored from SQLite after server restart", async ()
     let teacherToken = "";
     try {
         await onceConnect(firstTeacher);
+        const questionSetId = await createQuestionSet(firstTeacher);
         const created = await emitAck<{ ok: true; code: string; teacherToken: string }>(
             firstTeacher,
             "teacher:createSession",
-            { accessPin: "test-pin" }
+            { accessPin: "test-pin", questionSetId }
         );
         assert.equal(created.ok, true);
         code = created.code;
@@ -280,7 +359,6 @@ test("socket session can be restored from SQLite after server restart", async ()
 test("socket flow returns SESSION_FULL when max players is reached", async () => {
     const runtime = await createAppServer({
         config: testConfig({ maxPlayersPerSession: 1 }),
-        repository: null,
     });
 
     await runtime.listen("127.0.0.1");
@@ -295,10 +373,11 @@ test("socket flow returns SESSION_FULL when max players is reached", async () =>
 
     try {
         await Promise.all([onceConnect(teacher), onceConnect(playerOne), onceConnect(playerTwo)]);
+        const questionSetId = await createQuestionSet(teacher);
         const teacherCreated = await emitAck<{ ok: true; code: string }>(
             teacher,
             "teacher:createSession",
-            { accessPin: "test-pin" }
+            { accessPin: "test-pin", questionSetId }
         );
 
         const joinedOne = await emitAck<{ ok: true }>(playerOne, "player:join", {
