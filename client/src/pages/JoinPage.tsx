@@ -161,8 +161,8 @@ export default function JoinPage() {
                             <ThemeToggle theme={theme} onChange={setTheme} />
                         </div>
                     </div>
-                    <h1 className="mt-5 text-4xl font-black leading-tight text-[var(--text)]">{copy.join.entryTitle}</h1>
-                    <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">{copy.join.subtitle}</p>
+                    <h1 className="mt-5 text-4xl font-black leading-tight text-(--text)">{copy.join.entryTitle}</h1>
+                    <p className="mt-3 text-sm leading-6 text-(--text-muted)">{copy.join.subtitle}</p>
 
                     {isRejoining ? (
                         <div className="mt-5">
@@ -171,7 +171,7 @@ export default function JoinPage() {
                     ) : (
                         <div className="mt-5 grid gap-3">
                             <input
-                                className="h-14 rounded-xl border border-[var(--border)] bg-[var(--surface-solid)] px-4 text-lg font-bold text-[var(--text)] outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                                className="h-14 rounded-xl border border-(--border) bg-(--surface-solid) px-4 text-lg font-bold text-(--text) outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
                                 placeholder={copy.join.placeholder}
                                 value={name}
                                 onChange={(event) => setName(event.target.value)}
@@ -197,7 +197,7 @@ export default function JoinPage() {
             <div className="mx-auto grid w-full max-w-2xl gap-4">
                 <header className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                        <div className="truncate text-sm font-bold text-[var(--text-muted)]">{player?.name || copy.defaultPlayerName}</div>
+                        <div className="truncate text-sm font-bold text-(--text-muted)">{player?.name || copy.defaultPlayerName}</div>
                         <h1 className="text-3xl font-black leading-tight">
                             {session?.status === "finished" ? copy.join.thankYou : copy.appName}
                         </h1>
@@ -214,7 +214,7 @@ export default function JoinPage() {
                 <Panel className="grid gap-3">
                     <div className="flex items-center justify-between gap-3">
                         <div>
-                            <div className="text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{copy.join.progressTitle}</div>
+                            <div className="text-xs font-bold uppercase tracking-wide text-(--text-muted)">{copy.join.progressTitle}</div>
                             <div className="mt-1 text-2xl font-black">{player?.score ?? 0} {copy.labels.points}</div>
                         </div>
                         {alreadyAnswered ? <StatusPill tone="green">{copy.join.answerSent}</StatusPill> : null}
@@ -263,17 +263,17 @@ export default function JoinPage() {
                                     {resultFeedback || copy.join.resultAccepted}
                                 </StatusPill>
                                 <h2 className="text-3xl font-black">{copy.join.resultTitle}</h2>
-                                <p className="max-w-sm text-sm leading-6 text-[var(--text-muted)]">{copy.join.resultHint}</p>
+                                <p className="max-w-sm text-sm leading-6 text-(--text-muted)">{copy.join.resultHint}</p>
                             </Panel>
                         ) : null}
 
                         {session?.status === "finished" ? (
                             <Panel className="grid justify-items-center gap-4 py-10 text-center">
                                 <h2 className="text-3xl font-black">{copy.join.finishedTitle}</h2>
-                                <div className="rounded-2xl bg-[var(--text)] px-5 py-3 text-2xl font-black text-[var(--background)]">
+                                <div className="rounded-2xl bg-(--text) px-5 py-3 text-2xl font-black text-(--background)">
                                     {player?.score ?? 0} {copy.labels.points}
                                 </div>
-                                <p className="max-w-sm text-sm leading-6 text-[var(--text-muted)]">{copy.join.finishedHint}</p>
+                                <p className="max-w-sm text-sm leading-6 text-(--text-muted)">{copy.join.finishedHint}</p>
                             </Panel>
                         ) : null}
                     </motion.section>
