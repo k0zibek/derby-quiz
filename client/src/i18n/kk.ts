@@ -1,6 +1,6 @@
-import type { AckResponse, ConnectionState, GameStatus } from "../../../shared/types";
+import type { AppMessages } from "./types";
 
-export const kz = {
+export const kk: AppMessages = {
     appName: "Жайлау Quiz Race",
     defaultPlayerName: "Ойыншы",
     labels: {
@@ -18,6 +18,8 @@ export const kz = {
         linkForPlayers: "Оқушыларға арналған сілтеме",
         linkForScreen: "Үлкен экранға арналған сілтеме",
         answerCount: "жауап",
+        questionImageAlt: "Сұрақ материалы",
+        optionImageAlt: (label: string) => `${label} нұсқасы`,
     },
     buttons: {
         connect: "Қосылу",
@@ -59,6 +61,11 @@ export const kz = {
         rosterTitle: "Қатысушылар",
         resetTitle: "Ойынды қайта бастау керек пе?",
         resetBody: "Ұпайлар мен ағымдағы прогресс нөлденеді. Қатысушылар сессияда қалады.",
+        modes: {
+            library: "Кітапхана",
+            preparation: "Дайындық",
+            live: "Жанды ойын",
+        },
     },
     teacherLibrary: {
         kicker: "Сұрақтар кітапханасы",
@@ -149,52 +156,4 @@ export const kz = {
             finished: "Финал",
         },
     },
-} as const;
-
-export function getStatusView(status: GameStatus | undefined) {
-    return status ? kz.states[status] : kz.states.lobby;
-}
-
-export function getConnectionMessage(connectionState: ConnectionState, serverUrl: string): string {
-    if (connectionState === "connecting") {
-        return kz.network.connecting(serverUrl);
-    }
-
-    if (connectionState === "disconnected") {
-        return kz.network.disconnected(serverUrl);
-    }
-
-    return "";
-}
-
-export function getSocketErrorMessage(response: AckResponse | undefined): string {
-    if (!response || response.ok) {
-        return kz.network.genericJoin;
-    }
-
-    if (response.code === "SOCKET_CONNECT_TIMEOUT") {
-        return kz.network.connectTimeout;
-    }
-
-    if (response.code === "SOCKET_CONNECT_ERROR") {
-        return kz.network.connectError;
-    }
-
-    if (response.code === "ACK_TIMEOUT") {
-        return kz.network.ackTimeout;
-    }
-
-    if (response.code === "TEACHER_ACCESS_DENIED") {
-        return kz.network.teacherAccessDenied;
-    }
-
-    if (response.code === "UNAUTHORIZED") {
-        return kz.network.unauthorized;
-    }
-
-    return response.error || kz.network.genericJoin;
-}
-
-export function getRaceStatusText(status: GameStatus | undefined): string {
-    return status ? kz.race.statusText[status] : kz.race.statusText.lobby;
-}
+};

@@ -130,6 +130,20 @@ function subscribeToConnection(handler: (event: ConnectionEvent) => void): () =>
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect_error", handleConnectError);
+    queueMicrotask(() => {
+        const state = getConnectionState();
+        if (state === "connected") {
+            handler({ type: "connect", state });
+            return;
+        }
+
+        if (state === "disconnected") {
+            handler({ type: "disconnect", state, reason: "initial" });
+            return;
+        }
+
+        handler({ type: "connect_error", state, error: "Connecting to the game server" });
+    });
 
     return () => {
         socket.off("connect", handleConnect);

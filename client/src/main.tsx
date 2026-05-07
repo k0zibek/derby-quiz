@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { AppPreferencesProvider } from "./appPreferences";
 import App from "./App";
 import "./style/index.css";
 
@@ -10,6 +11,8 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <AppPreferencesProvider>
+      <App />
+    </AppPreferencesProvider>
   </StrictMode>,
 );

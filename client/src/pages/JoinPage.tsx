@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 
-import { AnswerTile, Button, InlineNotice, Panel, Progress, StatusPill } from "../components/ui";
+import { useAppPreferences } from "../appPreferencesContext";
+import { AnswerTile, AppShell, Button, InlineNotice, LanguageToggle, Panel, Progress, StatusPill, ThemeToggle } from "../components/ui";
 import { QuestionContent, QuestionOptionContent } from "../components/QuestionContent";
-import { getConnectionMessage, getSocketErrorMessage, kz } from "../i18n/kz";
+import { getConnectionMessage, getSocketErrorMessage } from "../i18n/helpers";
 import { useConnectionState, usePlayerActions, useSessionState } from "../hooks/sessionHooks";
 import { sessionClient } from "../sessionClient";
 import { clearPlayerSession, loadPlayerSession, savePlayerSession } from "../sessionStorage";
@@ -18,6 +19,7 @@ const OPTION_TILE_CLASSES = [
 ];
 
 export default function JoinPage() {
+    const { locale, setLocale, theme, setTheme, messages: copy } = useAppPreferences();
     const { code } = useParams();
     const gameCode = code ?? "";
     const [name, setName] = useState("");
@@ -68,7 +70,7 @@ export default function JoinPage() {
             ) {
                 clearPlayerSession(gameCode);
                 if (res?.code === "SESSION_NOT_FOUND") {
-                    setSessionError(kz.errors.sessionNotFound);
+                    setSessionError(copy.errors.sessionNotFound);
                 }
             }
 
@@ -78,29 +80,29 @@ export default function JoinPage() {
                 res.code !== "SOCKET_CONNECT_ERROR" &&
                 res.code !== "ACK_TIMEOUT"
             ) {
-                setSessionError(getSocketErrorMessage(res));
+                setSessionError(getSocketErrorMessage(res, copy));
             }
 
             setIsRejoining(false);
         }
 
         restorePlayer();
-    }, [gameCode, joined, setSession]);
+    }, [gameCode, joined, copy, setSession]);
 
     const player = session?.player;
     const alreadyAnswered = Boolean(player?.answeredCurrent);
-    const connectionMessage = getConnectionMessage(connectionState, serverUrl);
+    const connectionMessage = getConnectionMessage(connectionState, serverUrl, copy);
     const resultFeedback = session?.status === "result" && player?.lastAnswerCorrect === true
-        ? kz.answerFeedback.correct
+        ? copy.answerFeedback.correct
         : session?.status === "result" && player?.lastAnswerCorrect === false
-          ? kz.answerFeedback.incorrect
+          ? copy.answerFeedback.incorrect
           : answerFeedback;
 
     async function handleJoin() {
         if (joinLoading) return;
 
         if (!name.trim()) {
-            setSessionError(kz.errors.enterName);
+            setSessionError(copy.errors.enterName);
             return;
         }
 
@@ -111,7 +113,7 @@ export default function JoinPage() {
         setJoinLoading(false);
 
         if (!res?.ok) {
-            setSessionError(res?.code === "SESSION_NOT_FOUND" ? kz.errors.sessionNotFound : getSocketErrorMessage(res));
+                setSessionError(res?.code === "SESSION_NOT_FOUND" ? copy.errors.sessionNotFound : getSocketErrorMessage(res, copy));
             return;
         }
 
@@ -140,37 +142,43 @@ export default function JoinPage() {
                 setPlayerToken("");
                 setSession(null);
             }
-            setSessionError(getSocketErrorMessage(res));
+            setSessionError(getSocketErrorMessage(res, copy));
             return;
         }
 
         setSessionError("");
-        setAnswerFeedback(res.isCorrect ? kz.answerFeedback.correct : kz.answerFeedback.incorrect);
+        setAnswerFeedback(res.isCorrect ? copy.answerFeedback.correct : copy.answerFeedback.incorrect);
     }
 
     if (!joined) {
         return (
-            <main className="grid min-h-screen place-items-center bg-slate-50 p-5">
+            <AppShell variant="player" className="grid place-items-center p-5">
                 <Panel className="w-full max-w-md p-6">
-                    <StatusPill tone="blue">{kz.labels.code}: {gameCode}</StatusPill>
-                    <h1 className="mt-5 text-4xl font-black leading-tight text-slate-950">{kz.join.entryTitle}</h1>
-                    <p className="mt-3 text-sm leading-6 text-slate-600">{kz.join.subtitle}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <StatusPill tone="blue">{copy.labels.code}: {gameCode}</StatusPill>
+                        <div className="flex gap-2">
+                            <LanguageToggle locale={locale} onChange={setLocale} />
+                            <ThemeToggle theme={theme} onChange={setTheme} />
+                        </div>
+                    </div>
+                    <h1 className="mt-5 text-4xl font-black leading-tight text-[var(--text)]">{copy.join.entryTitle}</h1>
+                    <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">{copy.join.subtitle}</p>
 
                     {isRejoining ? (
                         <div className="mt-5">
-                            <InlineNotice>{kz.join.restore}</InlineNotice>
+                            <InlineNotice>{copy.join.restore}</InlineNotice>
                         </div>
                     ) : (
                         <div className="mt-5 grid gap-3">
                             <input
-                                className="h-14 rounded-xl border border-slate-200 bg-white px-4 text-lg font-bold outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
-                                placeholder={kz.join.placeholder}
+                                className="h-14 rounded-xl border border-[var(--border)] bg-[var(--surface-solid)] px-4 text-lg font-bold text-[var(--text)] outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                                placeholder={copy.join.placeholder}
                                 value={name}
                                 onChange={(event) => setName(event.target.value)}
                                 maxLength={24}
                             />
                             <Button className="min-h-14 text-base" onClick={handleJoin} disabled={joinLoading || isRejoining}>
-                                {joinLoading ? kz.buttons.connecting : kz.buttons.connect}
+                                {joinLoading ? copy.buttons.connecting : copy.buttons.connect}
                             </Button>
                         </div>
                     )}
@@ -180,32 +188,36 @@ export default function JoinPage() {
                         {connectionMessage ? <InlineNotice>{connectionMessage}</InlineNotice> : null}
                     </div>
                 </Panel>
-            </main>
+            </AppShell>
         );
     }
 
     return (
-        <main className="min-h-screen bg-slate-50 p-4 text-slate-950">
+        <AppShell variant="player">
             <div className="mx-auto grid w-full max-w-2xl gap-4">
                 <header className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                        <div className="truncate text-sm font-bold text-slate-500">{player?.name || kz.defaultPlayerName}</div>
+                        <div className="truncate text-sm font-bold text-[var(--text-muted)]">{player?.name || copy.defaultPlayerName}</div>
                         <h1 className="text-3xl font-black leading-tight">
-                            {session?.status === "finished" ? kz.join.thankYou : kz.appName}
+                            {session?.status === "finished" ? copy.join.thankYou : copy.appName}
                         </h1>
                     </div>
                     <StatusPill tone={session?.status === "question" ? "blue" : session?.status === "result" ? "amber" : "neutral"}>
-                        {session ? kz.states[session.status].text : kz.states.lobby.text}
+                        {session ? copy.states[session.status].text : copy.states.lobby.text}
                     </StatusPill>
                 </header>
+                <div className="flex justify-end gap-2">
+                    <LanguageToggle locale={locale} onChange={setLocale} />
+                    <ThemeToggle theme={theme} onChange={setTheme} />
+                </div>
 
                 <Panel className="grid gap-3">
                     <div className="flex items-center justify-between gap-3">
                         <div>
-                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{kz.join.progressTitle}</div>
-                            <div className="mt-1 text-2xl font-black">{player?.score ?? 0} {kz.labels.points}</div>
+                            <div className="text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">{copy.join.progressTitle}</div>
+                            <div className="mt-1 text-2xl font-black">{player?.score ?? 0} {copy.labels.points}</div>
                         </div>
-                        {alreadyAnswered ? <StatusPill tone="green">{kz.join.answerSent}</StatusPill> : null}
+                        {alreadyAnswered ? <StatusPill tone="green">{copy.join.answerSent}</StatusPill> : null}
                     </div>
                     <Progress value={player?.progress ?? 0} color={player?.color || "#0284c7"} />
                 </Panel>
@@ -220,14 +232,15 @@ export default function JoinPage() {
                     >
                         {session?.status === "lobby" ? (
                             <Panel>
-                                <InlineNotice>{kz.join.lobby}</InlineNotice>
+                                <InlineNotice>{copy.join.lobby}</InlineNotice>
                             </Panel>
                         ) : null}
 
                         {session?.status === "question" && session?.currentQuestion ? (
                             <QuestionContent
                                 question={session.currentQuestion}
-                                badge={`${kz.labels.question} ${(session.currentQuestionIndex ?? 0) + 1} / ${session.totalQuestions}`}
+                                badge={`${copy.labels.question} ${(session.currentQuestionIndex ?? 0) + 1} / ${session.totalQuestions}`}
+                                questionImageAlt={copy.labels.questionImageAlt}
                             >
                                 <div className="mt-4 grid gap-3">
                                     {session.currentQuestion.options.map((option, index) => (
@@ -237,7 +250,7 @@ export default function JoinPage() {
                                             disabled={alreadyAnswered || connectionState !== "connected"}
                                             onClick={() => submitAnswer(index)}
                                         >
-                                            <QuestionOptionContent option={option} index={index} />
+                                            <QuestionOptionContent option={option} index={index} imageAlt={copy.labels.optionImageAlt} />
                                         </AnswerTile>
                                     ))}
                                 </div>
@@ -246,21 +259,21 @@ export default function JoinPage() {
 
                         {session?.status === "result" ? (
                             <Panel className="grid justify-items-center gap-4 py-10 text-center">
-                                <StatusPill tone={resultFeedback === kz.answerFeedback.correct ? "green" : "red"}>
-                                    {resultFeedback || kz.join.resultAccepted}
+                                <StatusPill tone={resultFeedback === copy.answerFeedback.correct ? "green" : "red"}>
+                                    {resultFeedback || copy.join.resultAccepted}
                                 </StatusPill>
-                                <h2 className="text-3xl font-black">{kz.join.resultTitle}</h2>
-                                <p className="max-w-sm text-sm leading-6 text-slate-600">{kz.join.resultHint}</p>
+                                <h2 className="text-3xl font-black">{copy.join.resultTitle}</h2>
+                                <p className="max-w-sm text-sm leading-6 text-[var(--text-muted)]">{copy.join.resultHint}</p>
                             </Panel>
                         ) : null}
 
                         {session?.status === "finished" ? (
                             <Panel className="grid justify-items-center gap-4 py-10 text-center">
-                                <h2 className="text-3xl font-black">{kz.join.finishedTitle}</h2>
-                                <div className="rounded-2xl bg-slate-950 px-5 py-3 text-2xl font-black text-white">
-                                    {player?.score ?? 0} {kz.labels.points}
+                                <h2 className="text-3xl font-black">{copy.join.finishedTitle}</h2>
+                                <div className="rounded-2xl bg-[var(--text)] px-5 py-3 text-2xl font-black text-[var(--background)]">
+                                    {player?.score ?? 0} {copy.labels.points}
                                 </div>
-                                <p className="max-w-sm text-sm leading-6 text-slate-600">{kz.join.finishedHint}</p>
+                                <p className="max-w-sm text-sm leading-6 text-[var(--text-muted)]">{copy.join.finishedHint}</p>
                             </Panel>
                         ) : null}
                     </motion.section>
@@ -271,6 +284,6 @@ export default function JoinPage() {
                     {connectionMessage ? <InlineNotice>{connectionMessage}</InlineNotice> : null}
                 </div>
             </div>
-        </main>
+        </AppShell>
     );
 }

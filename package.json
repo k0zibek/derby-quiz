@@ -11,7 +11,7 @@
     "classroom": "npm --workspace server run classroom",
     "lint": "npm --workspace client run lint",
     "typecheck": "npm --workspace server run typecheck && npm --workspace client run typecheck",
-    "test": "npm run typecheck && npm --workspace server test",
+    "test": "npm run typecheck && npm --workspace client test && npm --workspace server test",
     "audit:prod": "npm audit --omit=dev"
   },
   "devDependencies": {

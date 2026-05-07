@@ -1,14 +1,16 @@
 import { QRCodeCanvas } from "qrcode.react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
+import type { Locale, Theme } from "../preferences";
+
 type Tone = "primary" | "neutral" | "success" | "warning" | "danger";
 
 const toneClasses: Record<Tone, string> = {
-    primary: "bg-sky-600 text-white shadow-sky-900/15 hover:bg-sky-700",
-    neutral: "border border-slate-200 bg-white text-slate-800 shadow-slate-900/5 hover:bg-slate-50",
-    success: "bg-emerald-600 text-white shadow-emerald-900/15 hover:bg-emerald-700",
-    warning: "bg-amber-500 text-white shadow-amber-900/15 hover:bg-amber-600",
-    danger: "bg-rose-600 text-white shadow-rose-900/15 hover:bg-rose-700",
+    primary: "button-primary",
+    neutral: "button-neutral",
+    success: "button-success",
+    warning: "button-warning",
+    danger: "button-danger",
 };
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -43,7 +45,7 @@ export function Panel({
     className?: string;
 }) {
     return (
-        <section className={cn("rounded-2xl border border-slate-200/80 bg-white/88 p-5 shadow-sm shadow-slate-900/5", className)}>
+        <section className={cn("rounded-2xl border border-(--border) bg-(--surface) p-5 shadow-sm shadow-slate-900/5", className)}>
             {children}
         </section>
     );
@@ -59,7 +61,7 @@ export function StatusPill({
     className?: string;
 }) {
     const styles = {
-        neutral: "bg-slate-100 text-slate-700",
+        neutral: "bg-(--surface-soft) text-(--text-muted)",
         blue: "bg-sky-100 text-sky-800",
         green: "bg-emerald-100 text-emerald-800",
         amber: "bg-amber-100 text-amber-800",
@@ -83,7 +85,7 @@ export function Progress({
     className?: string;
 }) {
     return (
-        <div className={cn("h-2.5 overflow-hidden rounded-full bg-slate-200", className)}>
+        <div className={cn("h-2.5 overflow-hidden rounded-full bg-(--progress-track)", className)}>
             <div
                 className="h-full rounded-full transition-[width] duration-500"
                 style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color }}
@@ -112,10 +114,10 @@ export function Modal({
     if (!open) return null;
 
     return (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/35 p-4">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
-                <h2 className="text-xl font-black text-slate-950">{title}</h2>
-                <div className="mt-2 text-sm leading-6 text-slate-600">{children}</div>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-(--surface) p-5 shadow-2xl">
+                <h2 className="text-xl font-black text-(--text)">{title}</h2>
+                <div className="mt-2 text-sm leading-6 text-(--text-muted)">{children}</div>
                 <div className="mt-5 grid grid-cols-2 gap-3">
                     <Button tone="neutral" onClick={onCancel}>
                         {cancelLabel}
@@ -140,12 +142,12 @@ export function QrBlock({
 }) {
     return (
         <div className="grid justify-items-center gap-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-(--border) bg-white p-4 shadow-sm">
                 <QRCodeCanvas value={value || "https://example.com"} size={188} />
             </div>
             <div className="text-center">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</div>
-                <div className="mt-1 font-mono text-5xl font-black tracking-[0.16em] text-slate-950">{code || "----"}</div>
+                <div className="text-xs font-bold uppercase tracking-wide text-(--text-muted)">{label}</div>
+                <div className="mt-1 font-mono text-5xl font-black tracking-[0.16em] text-(--text)">{code || "----"}</div>
             </div>
         </div>
     );
@@ -159,12 +161,123 @@ export function InlineNotice({
     tone?: "neutral" | "danger" | "success";
 }) {
     const styles = {
-        neutral: "border-slate-200 bg-white text-slate-600",
+        neutral: "border-(--border) bg-(--surface) text-(--text-muted)",
         danger: "border-rose-200 bg-rose-50 text-rose-800",
         success: "border-emerald-200 bg-emerald-50 text-emerald-800",
     };
 
     return <div className={cn("rounded-xl border px-4 py-3 text-sm font-semibold", styles[tone])}>{children}</div>;
+}
+
+export function AppShell({
+    children,
+    className,
+    variant = "app",
+}: {
+    children: ReactNode;
+    className?: string;
+    variant?: "app" | "screen" | "player";
+}) {
+    return (
+        <main className={cn("min-h-screen text-(--text)", variant === "screen" ? "bg-(--screen-bg) p-5" : "bg-(--background)", variant === "player" ? "p-4" : "", className)}>
+            {children}
+        </main>
+    );
+}
+
+export function TopBar({
+    children,
+    controls,
+    className,
+}: {
+    children: ReactNode;
+    controls?: ReactNode;
+    className?: string;
+}) {
+    return (
+        <header className={cn("flex flex-wrap items-center justify-between gap-3", className)}>
+            <div className="min-w-0">{children}</div>
+            {controls ? <div className="flex flex-wrap items-center justify-end gap-2">{controls}</div> : null}
+        </header>
+    );
+}
+
+export function SegmentedTabs<T extends string>({
+    items,
+    value,
+    onChange,
+    ariaLabel,
+}: {
+    items: Array<{ value: T; label: string; disabled?: boolean }>;
+    value: T;
+    onChange: (value: T) => void;
+    ariaLabel?: string;
+}) {
+    return (
+        <div
+            aria-label={ariaLabel}
+            className="inline-flex rounded-xl border border-(--border) bg-(--surface-soft) p-1"
+            role="group"
+        >
+            {items.map((item) => (
+                <button
+                    key={item.value}
+                    aria-pressed={value === item.value}
+                    className={cn(
+                        "min-h-10 rounded-lg px-4 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-40",
+                        value === item.value
+                            ? "bg-(--surface) text-(--text) shadow-sm"
+                            : "text-(--text-muted) hover:text-(--text)"
+                    )}
+                    disabled={item.disabled}
+                    onClick={() => onChange(item.value)}
+                    type="button"
+                >
+                    {item.label}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+export function LanguageToggle({
+    locale,
+    onChange,
+}: {
+    locale: Locale;
+    onChange: (locale: Locale) => void;
+}) {
+    return (
+        <SegmentedTabs
+            items={[
+                { value: "kk", label: "Қаз" },
+                { value: "ru", label: "Рус" },
+            ]}
+            ariaLabel="Language"
+            value={locale}
+            onChange={onChange}
+        />
+    );
+}
+
+export function ThemeToggle({
+    theme,
+    onChange,
+}: {
+    theme: Theme;
+    onChange: (theme: Theme) => void;
+}) {
+    return (
+        <SegmentedTabs
+            items={[
+                { value: "light", label: "Light" },
+                { value: "dark", label: "Dark" },
+            ]}
+            ariaLabel="Theme"
+            value={theme}
+            onChange={onChange}
+        />
+    );
 }
 
 export function AnswerTile({

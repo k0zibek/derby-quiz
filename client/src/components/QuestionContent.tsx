@@ -9,7 +9,15 @@ function getOptionLetter(index: number, option: QuestionOption): string {
     return option.label || String.fromCharCode(65 + index);
 }
 
-export function QuestionOptionContent({ option, index }: { option: QuestionOption; index: number }) {
+export function QuestionOptionContent({
+    option,
+    index,
+    imageAlt,
+}: {
+    option: QuestionOption;
+    index: number;
+    imageAlt?: (label: string) => string;
+}) {
     const label = getOptionLetter(index, option);
 
     return (
@@ -20,7 +28,7 @@ export function QuestionOptionContent({ option, index }: { option: QuestionOptio
                     <img
                         className="question-option-image"
                         src={option.image}
-                        alt={`${label} нұсқасы`}
+                        alt={imageAlt ? imageAlt(label) : `${label} option`}
                         loading="lazy"
                     />
                 ) : null}
@@ -35,12 +43,14 @@ export function QuestionContent({
     badge,
     titleTag: TitleTag = "h2",
     titleClassName = "question-title",
+    questionImageAlt = "Question material",
     children,
 }: {
     question: QuestionLike | null;
     badge?: string;
     titleTag?: HeadingTag;
     titleClassName?: string;
+    questionImageAlt?: string;
     children?: ReactNode;
 }) {
     if (!question) return null;
@@ -75,7 +85,7 @@ export function QuestionContent({
             ) : null}
 
             {question.image ? (
-                <img className="question-media mt-16" src={question.image} alt="Сұрақ материалы" loading="lazy" />
+                <img className="question-media mt-16" src={question.image} alt={questionImageAlt} loading="lazy" />
             ) : null}
 
             {titleNode}
